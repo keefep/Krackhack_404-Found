@@ -1,179 +1,177 @@
-import React, { useState } from 'react';
-import { View, StyleSheet, ScrollView } from 'react-native';
-import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { AuthStackParamList } from '../../navigation/types';
-import { Button, Input, LoadingScreen } from '../../components';
-import { useTheme } from '../../theme';
-import { useAuth } from '../../contexts';
+import React, { useState, useCallback } from 'react';
+import {
+  View,
+  StyleSheet,
+  ScrollView,
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+} from 'react-native';
+import { useTheme } from '@react-navigation/native';
+import { z } from 'zod';
+import { Input } from '../../components/Input/Input';
+import { Button } from '../../components/Button/Button';
+import { useAuth } from '../../contexts/AuthContext';
+import { useFormValidation, commonSchemas } from '../../hooks/useFormValidation';
+import { APIError } from '../../services/api';
+import { AuthScreenProps } from '../../navigation/types';
 
-type Props = NativeStackScreenProps<AuthStackParamList, 'Register'>;
+const registerSchema = z.object({
+  name: commonSchemas.name,
+  email: commonSchemas.email,
+  password: commonSchemas.password,
+  collegeId: z
+    .string()
+    .regex(/^[A-Z0-9]{6,10}$/, 'Enter a valid college ID (e.g., B20001)'),
+  phoneNumber: commonSchemas.phoneNumber,
+}).strict();
 
-interface FormData {
-  name: string;
-  email: string;
-  password: string;
-  confirmPassword: string;
-  phone: string;
-}
+type RegisterForm = z.infer<typeof registerSchema>;
 
-export const RegisterScreen: React.FC<Props> = ({ navigation }) => {
+export const RegisterScreen: React.FC<AuthScreenProps<'Register'>> = ({ navigation }) => {
   const theme = useTheme();
-  const { signUp } = useAuth();
-  
-  const [formData, setFormData] = useState<FormData>({
+  const { register } = useAuth();
+  const [isLoading, setIsLoading] = useState(false);
+
+  const { errors, validateField, validateForm } = useFormValidation(registerSchema);
+  const [formData, setFormData] = useState<RegisterForm>({
     name: '',
     email: '',
     password: '',
-    confirmPassword: '',
-    phone: '',
+    collegeId: '',
+    phoneNumber: '',
   });
-  const [errors, setErrors] = useState<Partial<FormData>>({});
-  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleChange = (field: keyof FormData) => (value: string) => {
-    setFormData(prev => ({ ...prev, [field]: value }));
-    // Clear error when user starts typing
-    if (errors[field]) {
-      setErrors(prev => ({ ...prev, [field]: undefined }));
-    }
-  };
+  const handleChange = useCallback((field: keyof RegisterForm, value: string) => {
+    setFormData(prev => ({
+      ...prev,
+      [field]: field === 'collegeId' ? value.toUpperCase() : value,
+    }));
+    validateField(field, value);
+  }, [validateField]);
 
-  const validateForm = () => {
-    const newErrors: Partial<FormData> = {};
-
-    if (!formData.name.trim()) {
-      newErrors.name = 'Name is required';
+  const handleRegister = useCallback(async () => {
+    if (!validateForm(formData)) {
+      Alert.alert('Validation Error', 'Please check your input and try again.');
+      return;
     }
 
-    if (!formData.email.trim()) {
-      newErrors.email = 'Email is required';
-    } else if (!/\S+@\S+\.\S+/.test(formData.email)) {
-      newErrors.email = 'Invalid email format';
+    setIsLoading(true);
+    try {
+      await register(formData);
+      // Navigation will be handled by AuthNavigator based on auth state
+    } catch (error) {
+      const message = error instanceof APIError
+        ? error.message
+        : 'An unexpected error occurred';
+      Alert.alert('Registration Failed', message);
+    } finally {
+      setIsLoading(false);
     }
+  }, [formData, register, validateForm]);
 
-    if (!formData.password) {
-      newErrors.password = 'Password is required';
-    } else if (formData.password.length < 6) {
-      newErrors.password = 'Password must be at least 6 characters';
-    }
-
-    if (formData.password !== formData.confirmPassword) {
-      newErrors.confirmPassword = 'Passwords do not match';
-    }
-
-    if (!formData.phone.trim()) {
-      newErrors.phone = 'Phone number is required';
-    } else if (!/^\d{10}$/.test(formData.phone)) {
-      newErrors.phone = 'Invalid phone number format';
-    }
-
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  };
-
-  const handleRegister = async () => {
-    if (validateForm()) {
-      try {
-        setIsSubmitting(true);
-        await signUp(formData.email, formData.password, formData.name);
-      } catch (error) {
-        console.error('Registration error:', error);
-        setErrors({
-          email: 'An account with this email already exists',
-        });
-      } finally {
-        setIsSubmitting(false);
-      }
-    }
-  };
-
-  if (isSubmitting) {
-    return <LoadingScreen message="Creating your account..." />;
-  }
+  const styles = StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: theme.colors.background,
+    },
+    content: {
+      padding: 16,
+    },
+    title: {
+      fontSize: 24,
+      fontWeight: 'bold',
+      color: theme.colors.text,
+      marginBottom: 24,
+      textAlign: 'center',
+    },
+    loginLink: {
+      marginTop: 16,
+      marginBottom: 32,
+      alignItems: 'center',
+    },
+    infoText: {
+      color: theme.colors.text,
+      fontSize: 12,
+      marginTop: 4,
+      marginBottom: 16,
+    },
+  });
 
   return (
-    <ScrollView
-      contentContainerStyle={[
-        styles.container,
-        { backgroundColor: theme.colors.background.default }
-      ]}
-      keyboardShouldPersistTaps="handled"
+    <KeyboardAvoidingView
+      style={styles.container}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
-      <View style={styles.form}>
+      <ScrollView
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
+      >
         <Input
           label="Full Name"
           value={formData.name}
-          onChangeText={handleChange('name')}
+          onChangeText={(value) => handleChange('name', value)}
           error={errors.name}
-          required
+          placeholder="Enter your full name"
+          autoCapitalize="words"
+          textContentType="name"
         />
+
         <Input
           label="Email"
           value={formData.email}
-          onChangeText={handleChange('email')}
+          onChangeText={(value) => handleChange('email', value)}
           error={errors.email}
-          autoCapitalize="none"
+          placeholder="Enter your IIT Mandi email"
           keyboardType="email-address"
-          required
+          autoCapitalize="none"
+          textContentType="emailAddress"
         />
+
         <Input
           label="Password"
           value={formData.password}
-          onChangeText={handleChange('password')}
+          onChangeText={(value) => handleChange('password', value)}
           error={errors.password}
+          placeholder="Create a strong password"
           secureTextEntry
-          required
+          textContentType="newPassword"
         />
+
         <Input
-          label="Confirm Password"
-          value={formData.confirmPassword}
-          onChangeText={handleChange('confirmPassword')}
-          error={errors.confirmPassword}
-          secureTextEntry
-          required
+          label="College ID"
+          value={formData.collegeId}
+          onChangeText={(value) => handleChange('collegeId', value)}
+          error={errors.collegeId}
+          placeholder="Enter your college ID"
+          autoCapitalize="characters"
         />
+
         <Input
-          label="Phone Number"
-          value={formData.phone}
-          onChangeText={handleChange('phone')}
-          error={errors.phone}
+          label="Phone Number (Optional)"
+          value={formData.phoneNumber}
+          onChangeText={(value) => handleChange('phoneNumber', value)}
+          error={errors.phoneNumber}
+          placeholder="Enter your phone number"
           keyboardType="phone-pad"
-          required
+          textContentType="telephoneNumber"
         />
+
         <Button
-          title="Create Account"
+          title="Register"
           onPress={handleRegister}
-          style={styles.button}
-          size="large"
-          fullWidth
+          loading={isLoading}
+          disabled={isLoading}
         />
-        <Button
-          title="Already have an account? Login"
-          onPress={() => navigation.navigate('Login')}
-          variant="text"
-          style={styles.textButton}
-        />
-      </View>
-    </ScrollView>
+
+        <View style={styles.loginLink}>
+          <Button
+            title="Already have an account? Login"
+            onPress={() => navigation.navigate('Login')}
+            variant="text"
+          />
+        </View>
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 };
-
-const styles = StyleSheet.create({
-  container: {
-    flexGrow: 1,
-    justifyContent: 'center',
-    padding: 20,
-  },
-  form: {
-    width: '100%',
-    maxWidth: 400,
-    alignSelf: 'center',
-  },
-  button: {
-    marginTop: 24,
-  },
-  textButton: {
-    marginTop: 16,
-    alignSelf: 'center',
-  },
-});

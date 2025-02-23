@@ -1,46 +1,32 @@
-export type ProductCondition = 'new' | 'like-new' | 'good' | 'fair' | 'poor';
-
-export interface Seller {
+export interface Product {
   id: string;
-  name: string;
+  title: string;
+  description: string;
+  price: number;
+  category: string;
+  condition: 'NEW' | 'LIKE_NEW' | 'GOOD' | 'FAIR';
+  images: string[];
+  sellerId: string;
+  sellerName: string;
+  status: 'AVAILABLE' | 'SOLD' | 'RESERVED';
+  createdAt: string;
+  updatedAt: string;
+  rating?: number;
+  location?: string;
+}
+
+export interface ProductImage {
+  id: string;
+  url: string;
+  thumbnail?: string;
+}
+
+export interface ProductReview {
+  id: string;
+  productId: string;
+  userId: string;
+  userName: string;
   rating: number;
-  avatar?: string;
-}
-
-export interface ProductPreview {
-  id: string;
-  title: string;
-  price: number;
-  images: string[];
-  condition: ProductCondition;
-  location: string;
-  viewCount?: number;
-}
-
-export interface ProductDetails extends ProductPreview {
-  description: string;
-  category: string;
-  seller: Seller;
+  comment: string;
   createdAt: string;
-  updatedAt: string;
-  status: 'available' | 'sold' | 'reserved';
-}
-
-export interface Product extends ProductDetails {
-  id: string;
-  title: string;
-  description: string;
-  price: number;
-  images: string[];
-  category: string;
-  condition: 'new' | 'like-new' | 'good' | 'fair' | 'poor';
-  seller: {
-    id: string;
-    name: string;
-    rating: number;
-  };
-  createdAt: string;
-  updatedAt: string;
-  status: 'available' | 'sold' | 'reserved';
-  location: string;
 }

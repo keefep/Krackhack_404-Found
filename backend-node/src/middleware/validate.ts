@@ -1,37 +1,31 @@
 import { Request, Response, NextFunction } from 'express';
-import { ValidationError } from '../utils/errors';
-import { Types } from 'mongoose';
-import { z, ZodError } from 'zod';
+import { z } from 'zod';
+import { VALIDATION_ERROR } from '../utils/errors';
 
-interface SchemaConfig {
-  body?: z.ZodTypeAny;
-  query?: z.ZodTypeAny;
-  params?: z.ZodTypeAny;
-}
+// Schema types
+export type ValidationSchema = {
+  query?: z.ZodSchema;
+  body?: z.ZodSchema;
+  params?: z.ZodSchema;
+};
 
-// Zod schema validation middleware
-export const validate = (schema: z.ZodTypeAny | SchemaConfig) => {
+// Validation middleware
+export const validate = (schema: ValidationSchema) => {
   return async (req: Request, res: Response, next: NextFunction) => {
     try {
-      if (schema instanceof z.ZodType) {
-        // If schema is a direct Zod schema, validate body
-        req.body = await schema.parseAsync(req.body);
-      } else {
-        // If schema is a config object, validate respective parts
-        if (schema.body) {
-          req.body = await schema.body.parseAsync(req.body);
-        }
-        if (schema.query) {
-          req.query = await schema.query.parseAsync(req.query);
-        }
-        if (schema.params) {
-          req.params = await schema.params.parseAsync(req.params);
-        }
+      if (schema.query) {
+        req.query = await schema.query.parseAsync(req.query);
+      }
+      if (schema.body) {
+        req.body = await schema.body.parseAsync(req.body);
+      }
+      if (schema.params) {
+        req.params = await schema.params.parseAsync(req.params);
       }
       next();
     } catch (error) {
-      if (error instanceof ZodError) {
-        next(new ValidationError(error.errors.map(err => err.message).join(', ')));
+      if (error instanceof z.ZodError) {
+        next(VALIDATION_ERROR(error.issues));
       } else {
         next(error);
       }
@@ -39,102 +33,86 @@ export const validate = (schema: z.ZodTypeAny | SchemaConfig) => {
   };
 };
 
-// Legacy validation middleware
-export const validateLegacy = {
-  // Chat validation
-  chat: (req: Request, res: Response, next: NextFunction) => {
-    const { participants, productId } = req.body;
+// Common schema parts
+export const schemas = {
+  // Product related schemas
+  product: {
+    condition: z.enum(['NEW', 'LIKE_NEW', 'GOOD', 'FAIR'] as const),
+    status: z.enum(['AVAILABLE', 'SOLD', 'RESERVED'] as const),
+    
+    base: z.object({
+      title: z.string().min(3).max(100),
+      description: z.string().min(10).max(2000),
+      price: z.number().positive(),
+      images: z.array(z.string()).min(1),
+      category: z.string(),
+      condition: z.enum(['NEW', 'LIKE_NEW', 'GOOD', 'FAIR'] as const),
+      location: z.string().optional(),
+      tags: z.array(z.string()).optional(),
+    }),
 
-    if (!participants || !Array.isArray(participants)) {
-      throw new ValidationError('Participants must be an array');
-    }
+    create: {
+      body: z.object({
+        title: z.string().min(3).max(100),
+        description: z.string().min(10).max(2000),
+        price: z.number().positive(),
+        images: z.array(z.string()).min(1),
+        category: z.string(),
+        condition: z.enum(['NEW', 'LIKE_NEW', 'GOOD', 'FAIR'] as const),
+        location: z.string().optional(),
+        tags: z.array(z.string()).optional(),
+      }),
+    },
 
-    if (participants.length < 2) {
-      throw new ValidationError('Chat must have at least 2 participants');
-    }
+    update: {
+      params: z.object({
+        id: z.string().regex(/^[0-9a-fA-F]{24}$/, 'Invalid product ID'),
+      }),
+      body: z.object({
+        title: z.string().min(3).max(100).optional(),
+        description: z.string().min(10).max(2000).optional(),
+        price: z.number().positive().optional(),
+        images: z.array(z.string()).min(1).optional(),
+        category: z.string().optional(),
+        condition: z.enum(['NEW', 'LIKE_NEW', 'GOOD', 'FAIR'] as const).optional(),
+        status: z.enum(['AVAILABLE', 'SOLD', 'RESERVED'] as const).optional(),
+        location: z.string().optional(),
+        tags: z.array(z.string()).optional(),
+      }),
+    },
 
-    // Validate participant IDs
-    participants.forEach(id => {
-      if (!Types.ObjectId.isValid(id)) {
-        throw new ValidationError(`Invalid participant ID: ${id}`);
-      }
-    });
+    search: {
+      query: z.object({
+        q: z.string().optional(),
+        page: z.coerce.number().positive().optional(),
+        limit: z.coerce.number().positive().optional(),
+        category: z.string().optional(),
+        condition: z.enum(['NEW', 'LIKE_NEW', 'GOOD', 'FAIR'] as const).optional(),
+        status: z.enum(['AVAILABLE', 'SOLD', 'RESERVED'] as const).optional(),
+        minPrice: z.coerce.number().nonnegative().optional(),
+        maxPrice: z.coerce.number().positive().optional(),
+        sortBy: z.enum(['price', 'createdAt', 'rating']).optional(),
+        sortOrder: z.enum(['asc', 'desc']).optional(),
+      }),
+    },
 
-    // Validate product ID if provided
-    if (productId && !Types.ObjectId.isValid(productId)) {
-      throw new ValidationError('Invalid product ID');
-    }
-
-    next();
+    getById: {
+      params: z.object({
+        id: z.string().regex(/^[0-9a-fA-F]{24}$/, 'Invalid product ID'),
+      }),
+    },
   },
 
-  // Message validation
-  message: (req: Request, res: Response, next: NextFunction) => {
-    const { content, type, fileUrl, fileName, fileSize } = req.body;
-
-    if (!content || typeof content !== 'string' || content.trim().length === 0) {
-      throw new ValidationError('Message content is required');
-    }
-
-    // Validate message type
-    if (type && !['text', 'image', 'file'].includes(type)) {
-      throw new ValidationError('Invalid message type');
-    }
-
-    // Validate file-related fields if type is file or image
-    if ((type === 'file' || type === 'image')) {
-      if (!fileUrl) {
-        throw new ValidationError('File URL is required for file/image messages');
-      }
-
-      if (type === 'file' && (!fileName || !fileSize)) {
-        throw new ValidationError('File name and size are required for file messages');
-      }
-    }
-
-    // Validate file size if provided
-    if (fileSize && (typeof fileSize !== 'number' || fileSize <= 0)) {
-      throw new ValidationError('Invalid file size');
-    }
-
-    next();
-  },
-
-  // Chat ID parameter validation
-  chatId: (req: Request, res: Response, next: NextFunction) => {
-    const { chatId } = req.params;
-
-    if (!Types.ObjectId.isValid(chatId)) {
-      throw new ValidationError('Invalid chat ID');
-    }
-
-    next();
-  },
-
-  // Product ID parameter validation
-  productId: (req: Request, res: Response, next: NextFunction) => {
-    const { productId } = req.params;
-
-    if (!Types.ObjectId.isValid(productId)) {
-      throw new ValidationError('Invalid product ID');
-    }
-
-    next();
-  },
-
-  // Pagination query parameters
-  pagination: (req: Request, res: Response, next: NextFunction) => {
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 20;
-
-    if (page < 1) {
-      throw new ValidationError('Page number must be greater than 0');
-    }
-
-    if (limit < 1 || limit > 100) {
-      throw new ValidationError('Limit must be between 1 and 100');
-    }
-
-    next();
+  // Common utility schemas
+  common: {
+    objectId: z.string().regex(/^[0-9a-fA-F]{24}$/, 'Invalid ObjectId'),
+    pagination: z.object({
+      page: z.coerce.number().positive().optional(),
+      limit: z.coerce.number().positive().optional(),
+    }),
+    sorting: z.object({
+      sortBy: z.string().optional(),
+      sortOrder: z.enum(['asc', 'desc']).optional(),
+    }),
   },
 };

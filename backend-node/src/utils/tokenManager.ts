@@ -1,10 +1,10 @@
-import jwt, { SignOptions } from 'jsonwebtoken';
+import jwt, { SignOptions, Secret } from 'jsonwebtoken';
 import { Types } from 'mongoose';
 import { UserDocument } from '../models/User';
 import { ValidationError } from './errors';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'your-jwt-secret';
-const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'your-jwt-refresh-secret';
+const JWT_SECRET: Secret = process.env.JWT_SECRET || 'your-jwt-secret';
+const JWT_REFRESH_SECRET: Secret = process.env.JWT_REFRESH_SECRET || 'your-jwt-refresh-secret';
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '15m';
 const JWT_REFRESH_EXPIRES_IN = process.env.JWT_REFRESH_EXPIRES_IN || '7d';
 
@@ -19,12 +19,12 @@ export const generateTokens = (user: UserDocument) => {
     role: user.role,
   };
 
-  const accessTokenOptions: SignOptions = {
-    expiresIn: JWT_EXPIRES_IN,
+  const accessTokenOptions: jwt.SignOptions = {
+    expiresIn: JWT_EXPIRES_IN as jwt.SignOptions['expiresIn'],
   };
 
-  const refreshTokenOptions: SignOptions = {
-    expiresIn: JWT_REFRESH_EXPIRES_IN,
+  const refreshTokenOptions: jwt.SignOptions = {
+    expiresIn: JWT_REFRESH_EXPIRES_IN as jwt.SignOptions['expiresIn'],
   };
 
   // Generate access token
@@ -61,7 +61,7 @@ export const extractTokenFromHeader = (authHeader: string | undefined): string =
 };
 
 export const generateResetToken = (userId: string | Types.ObjectId): string => {
-  const resetTokenOptions: SignOptions = {
+  const resetTokenOptions: jwt.SignOptions = {
     expiresIn: '1h',
   };
 

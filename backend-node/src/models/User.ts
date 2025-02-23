@@ -1,120 +1,87 @@
-import mongoose, { Document, Schema, Model, Types } from 'mongoose';
-import bcrypt from 'bcrypt';
-import { ValidationError } from '../utils/errors';
+import mongoose, { Schema, Document } from 'mongoose';
 
-export interface IUser {
+export interface IUser extends Document {
   name: string;
   email: string;
   password: string;
   collegeId: string;
-  role: 'user' | 'admin' | 'moderator';
-  phoneNumber?: string;
-  verified: boolean;
-  idCardVerified: boolean;
+  role: 'USER' | 'ADMIN';
+  isVerified: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
 
-export interface IUserMethods {
-  comparePassword(candidatePassword: string): Promise<boolean>;
-}
-
-export type UserDocument = Document<unknown, {}, IUser> & 
-  Omit<IUser & { _id: Types.ObjectId }, keyof IUserMethods> & 
-  IUserMethods;
-
-interface UserModel extends Model<IUser, {}, IUserMethods> {
-  findByEmail(email: string): Promise<UserDocument | null>;
-}
-
-const userSchema = new Schema<IUser, UserModel, IUserMethods>(
+const userSchema = new Schema<IUser>(
   {
     name: {
       type: String,
-      required: [true, 'Please provide your name'],
+      required: [true, 'Name is required'],
       trim: true,
       minlength: [2, 'Name must be at least 2 characters long'],
+      maxlength: [50, 'Name cannot be more than 50 characters'],
     },
     email: {
       type: String,
-      required: [true, 'Please provide your email'],
+      required: [true, 'Email is required'],
       unique: true,
-      lowercase: true,
       trim: true,
+      lowercase: true,
       match: [
-        /^[\w-]+(\.[\w-]+)*@([\w-]+\.)+[\w-]{2,}$/,
-        'Please provide a valid email',
+        /^[\w-]+(\.[\w-]+)*@iitmandi\.ac\.in$/,
+        'Please enter a valid IIT Mandi email address',
       ],
     },
     password: {
       type: String,
-      required: [true, 'Please provide a password'],
-      minlength: [8, 'Password must be at least 8 characters long'],
-      select: false,
+      required: [true, 'Password is required'],
+      minlength: [6, 'Password must be at least 6 characters long'],
     },
     collegeId: {
       type: String,
-      required: [true, 'Please provide your college ID'],
+      required: [true, 'College ID is required'],
       unique: true,
       trim: true,
-      match: [/^[A-Z0-9]{6,10}$/, 'Please provide a valid college ID'],
+      uppercase: true,
+      match: [
+        /^(B|D|F|M|S)\d{5}|ADMIN\d{3}$/,
+        'Please enter a valid College ID',
+      ],
     },
     role: {
       type: String,
-      enum: ['user', 'admin', 'moderator'],
-      default: 'user',
+      enum: ['USER', 'ADMIN'],
+      default: 'USER',
     },
-    phoneNumber: {
-      type: String,
-      match: [/^\+?[0-9]{10,12}$/, 'Please provide a valid phone number'],
-      sparse: true,
-    },
-    verified: {
-      type: Boolean,
-      default: false,
-    },
-    idCardVerified: {
+    isVerified: {
       type: Boolean,
       default: false,
     },
   },
   {
     timestamps: true,
+    toJSON: {
+      transform: (_, obj) => {
+        delete obj.password;
+        return obj;
+      },
+    },
   }
 );
 
-// Indexes
-userSchema.index({ email: 1 });
-userSchema.index({ collegeId: 1 });
+// Indexes for better query performance
+userSchema.index({ email: 1 }, { unique: true });
+userSchema.index({ collegeId: 1 }, { unique: true });
 
-// Hash password before saving
-userSchema.pre('save', async function (this: UserDocument, next) {
-  if (!this.isModified('password')) return next();
+// Ensure email is from IIT Mandi domain
+userSchema.path('email').validate(function (email: string) {
+  return email.endsWith('@iitmandi.ac.in');
+}, 'Email must be from IIT Mandi domain');
 
-  try {
-    const salt = await bcrypt.genSalt(10);
-    this.password = await bcrypt.hash(this.password, salt);
-    next();
-  } catch (error) {
-    next(error as Error);
-  }
-});
+// Ensure collegeId follows the pattern
+userSchema.path('collegeId').validate(function (collegeId: string) {
+  return /^(B|D|F|M|S)\d{5}|ADMIN\d{3}$/.test(collegeId);
+}, 'Invalid College ID format');
 
-// Method to compare password
-userSchema.methods.comparePassword = async function (
-  this: UserDocument,
-  candidatePassword: string
-): Promise<boolean> {
-  try {
-    return await bcrypt.compare(candidatePassword, this.password);
-  } catch (error) {
-    throw new ValidationError('Error comparing passwords');
-  }
-};
+const User = mongoose.model<IUser>('User', userSchema);
 
-// Static method to find by email
-userSchema.static('findByEmail', function(email: string) {
-  return this.findOne({ email });
-});
-
-export const User = mongoose.model<IUser, UserModel>('User', userSchema);
+export default User;

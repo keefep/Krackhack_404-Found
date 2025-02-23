@@ -1,174 +1,241 @@
 import { Request, Response, NextFunction } from 'express';
 import { Types } from 'mongoose';
-import { Chat, IMessageData } from '../models/Chat';
-import { encryptMessage, decryptMessage } from '../utils/encryption';
-import { io } from '../utils/socket';
+import { Chat, IChat } from '../models/Chat';
 import { AuthRequest } from '../types/express';
+import { ValidationError } from '../utils/errors';
+import { encrypt, decrypt, generateChatRoomSecret, EncryptedMessage } from '../utils/encryption';
+import { io } from '../utils/socket';
 
-export const chatController = {
-  // Create a new chat between users
-  create: async (req: AuthRequest, res: Response, next: NextFunction) => {
-    try {
-      const { participantIds, productId } = req.body;
-      const chat = await Chat.create({
-        participants: participantIds,
-        product: productId,
-        messages: []
+interface CreateChatRequest extends Request {
+  body: {
+    participantId: string;
+    message: string;
+  };
+}
+
+interface SendMessageRequest extends Request {
+  body: {
+    chatId: string;
+    message: string;
+  };
+}
+
+export const createChat = async (
+  req: CreateChatRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const { participantId, message } = req.body;
+    const userId = (req as AuthRequest).user._id;
+
+    // Check if chat already exists
+    const existingChat = await Chat.findOne({
+      participants: {
+        $all: [userId, new Types.ObjectId(participantId)],
+        $size: 2
+      }
+    });
+
+    if (existingChat) {
+      return res.status(200).json({
+        status: 'success',
+        data: { chat: existingChat }
       });
-      res.status(201).json({ status: 'success', data: chat });
-      return;
-    } catch (error) {
-      next(error);
     }
-  },
-  getChats: async (req: AuthRequest, res: Response, next: NextFunction) => {
-    try {
-      const userId = req.user?._id;
-      if (!userId) {
-        return res.status(401).json({ status: 'error', message: 'Unauthorized' });
+
+    // Generate encryption key for the new chat
+    const encryptionKey = generateChatRoomSecret();
+
+    // Encrypt the first message
+    const encryptedContent = encrypt(message, encryptionKey);
+
+    // Create new chat
+    const chat = await Chat.create({
+      participants: [userId, participantId],
+      encryptionKey,
+      messages: [{
+        sender: userId,
+        content: encryptedContent,
+        readBy: [userId]
+      }],
+      lastMessage: {
+        sender: userId,
+        timestamp: new Date(),
+        preview: message.substring(0, 50) // Store truncated preview
       }
-      const chats = await Chat.find({ 
-        participants: userId,
-        active: true 
-      }).sort({ updatedAt: -1 });
-      res.status(200).json({ status: 'success', data: chats });
-      return;
-    } catch (error) {
-      next(error);
+    });
+
+    // Notify the other participant
+    io.to(participantId).emit('newChat', {
+      chatId: chat._id,
+      senderId: userId
+    });
+
+    res.status(201).json({
+      status: 'success',
+      data: { chat }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const sendMessage = async (
+  req: SendMessageRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const { chatId, message } = req.body;
+    const userId = (req as AuthRequest).user._id;
+
+    const chat = await Chat.findById(chatId);
+    if (!chat) {
+      throw new ValidationError('Chat not found');
     }
-  },
-  getMessages: async (req: AuthRequest, res: Response, next: NextFunction) => {
-    try {
-      const { chatId } = req.params;
-      const chat = await Chat.findById(chatId);
-      if (!chat) {
-        return res.status(404).json({ status: 'error', message: 'Chat not found' });
-      }
 
-      // Decrypt messages before sending
-      const decryptedMessages = chat.messages.map(msg => ({
-        ...msg.toObject(),
-        content: msg.type === 'text' ? decryptMessage(msg.content) : msg.content
-      }));
-
-      res.status(200).json({ status: 'success', data: decryptedMessages });
-      return;
-    } catch (error) {
-      next(error);
+    // Verify user is a participant
+    if (!chat.participants.includes(userId)) {
+      throw new ValidationError('Not authorized to send messages in this chat');
     }
-  },
-  sendMessage: async (req: AuthRequest, res: Response, next: NextFunction) => {
-    try {
-      const { chatId } = req.params;
-      const { content, type = 'text' } = req.body;
-      const senderId = req.user?._id;
 
-      if (!senderId) {
-        return res.status(401).json({ status: 'error', message: 'Unauthorized' });
-      }
+    // Encrypt the message
+    const encryptedContent = encrypt(message, chat.encryptionKey);
 
-      const chat = await Chat.findById(chatId);
-      if (!chat) {
-        return res.status(404).json({ status: 'error', message: 'Chat not found' });
-      }
+    // Add message to chat
+    const updatedChat = await Chat.findByIdAndUpdate(
+      chatId,
+      {
+        $push: {
+          messages: {
+            sender: userId,
+            content: encryptedContent,
+            readBy: [userId]
+          }
+        },
+        $set: {
+          lastMessage: {
+            sender: userId,
+            timestamp: new Date(),
+            preview: message.substring(0, 50)
+          }
+        }
+      },
+      { new: true }
+    );
 
-      // Encrypt message content if it's text
-      const messageData: IMessageData = {
-        sender: senderId,
-        content: type === 'text' ? encryptMessage(content) : content,
-        type,
-        readBy: [senderId],
-        deleted: false
-      };
-
-      await chat.addMessage(messageData);
-
-      // Notify other participants
-      chat.participants
-        .filter(participantId => participantId.toString() !== senderId.toString())
-        .forEach(participantId => {
-          io.to(`user_${participantId}`).emit('new_message', {
-            chatId,
-            message: {
-              ...messageData,
-              content: content // Send decrypted content for real-time display
-            }
-          });
+    // Notify other participants
+    chat.participants.forEach((participantId) => {
+      if (!participantId.equals(userId)) {
+        io.to(participantId.toString()).emit('newMessage', {
+          chatId,
+          senderId: userId,
+          message: encryptedContent
         });
+      }
+    });
 
-      res.status(200).json({ status: 'success', data: 'Message sent' });
-      return;
-    } catch (error) {
-      next(error);
+    res.status(200).json({
+      status: 'success',
+      data: {
+        message: {
+          sender: userId,
+          content: encryptedContent,
+          timestamp: new Date()
+        }
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getMessages = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const chatId = req.params.chatId;
+    const userId = req.user._id;
+
+    const chat = await Chat.findById(chatId);
+    if (!chat) {
+      throw new ValidationError('Chat not found');
     }
-  },
-  markAsRead: async (req: AuthRequest, res: Response, next: NextFunction) => {
-    try {
-      const { chatId } = req.params;
-      const userId = req.user?._id;
 
-      if (!userId) {
-        return res.status(401).json({ status: 'error', message: 'Unauthorized' });
-      }
-
-      const chat = await Chat.findById(chatId);
-      if (!chat) {
-        return res.status(404).json({ status: 'error', message: 'Chat not found' });
-      }
-
-      await chat.markAsRead(userId);
-
-      // Notify other participants about read status
-      chat.participants
-        .filter(participantId => participantId.toString() !== userId.toString())
-        .forEach(participantId => {
-          io.to(`user_${participantId}`).emit('messages_read', {
-            chatId,
-            userId
-          });
-        });
-
-      res.status(200).json({ status: 'success', data: 'Messages marked as read' });
-      return;
-    } catch (error) {
-      next(error);
+    // Verify user is a participant
+    if (!chat.participants.includes(userId)) {
+      throw new ValidationError('Not authorized to view these messages');
     }
-  },
-  deleteChat: async (req: AuthRequest, res: Response, next: NextFunction) => {
-    try {
-      const { chatId } = req.params;
-      const userId = req.user?._id;
 
-      if (!userId) {
-        return res.status(401).json({ status: 'error', message: 'Unauthorized' });
+    // Decrypt messages
+    const decryptedMessages = chat.messages.map(msg => ({
+      ...msg.toObject(),
+      content: decrypt(msg.content as EncryptedMessage, chat.encryptionKey)
+    }));
+
+    res.status(200).json({
+      status: 'success',
+      data: {
+        messages: decryptedMessages
       }
+    });
+  } catch (error) {
+    next(error);
+  }
+};
 
-      const chat = await Chat.findById(chatId);
-      if (!chat) {
-        return res.status(404).json({ status: 'error', message: 'Chat not found' });
-      }
+export const markAsRead = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const { chatId } = req.params;
+    const userId = req.user._id;
 
-      if (!chat.participants.some(p => p.toString() === userId.toString())) {
-        return res.status(403).json({ status: 'error', message: 'Not authorized to delete this chat' });
-      }
+    const chat = await Chat.findOneAndUpdate(
+      { _id: chatId, participants: userId },
+      {
+        $addToSet: {
+          'messages.$[].readBy': userId
+        }
+      },
+      { new: true }
+    );
 
-      // Soft delete by setting active to false
-      chat.active = false;
-      await chat.save();
-
-      // Notify other participants
-      chat.participants
-        .filter(participantId => participantId.toString() !== userId.toString())
-        .forEach(participantId => {
-          io.to(`user_${participantId}`).emit('chat_deleted', {
-            chatId
-          });
-        });
-
-      res.status(200).json({ status: 'success', data: 'Chat deleted' });
-      return;
-    } catch (error) {
-      next(error);
+    if (!chat) {
+      throw new ValidationError('Chat not found');
     }
-  },
+
+    res.status(200).json({
+      status: 'success',
+      data: null
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const getUserChats = async (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    const userId = req.user._id;
+
+    const chats = await Chat.find({ participants: userId })
+      .sort({ 'lastMessage.timestamp': -1 })
+      .populate('participants', 'name email');
+
+    res.status(200).json({
+      status: 'success',
+      data: { chats }
+    });
+  } catch (error) {
+    next(error);
+  }
 };

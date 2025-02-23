@@ -1,239 +1,369 @@
-import React, { useState, useCallback } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   View,
   StyleSheet,
   FlatList,
+  RefreshControl,
   Text,
   TouchableOpacity,
+  Modal,
   ActivityIndicator,
 } from 'react-native';
-import { SearchBar } from '@rneui/themed';
-import { ProductCard } from '../../components';
-import { useTheme } from '../../theme/hooks';
-import { ProductPreview } from '../../types/product';
-import { searchProducts, getSuggestedSearches, getRecentSearches } from '../../services/search';
-import debounce from 'lodash/debounce';
+import { useTheme } from '@react-navigation/native';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { Product } from '../../types/product';
+import { ProductCard } from '../../components/ProductCard/ProductCard';
+import searchService, { SearchFilters } from '../../services/search';
+import { Button } from '../../components/Button/Button';
+import { Card } from '../../components/Card/Card';
+import { LoadingScreen } from '../../components/LoadingScreen/LoadingScreen';
+import { MainTabScreenProps } from '../../navigation/types';
+import { Input } from '../../components/Input/Input';
 
-export const SearchResultsScreen: React.FC = () => {
-  const [search, setSearch] = useState('');
-  const [results, setResults] = useState<ProductPreview[]>([]);
-  const [suggestions, setSuggestions] = useState<string[]>([]);
-  const [recentSearches, setRecentSearches] = useState<string[]>([]);
-  const [showSuggestions, setShowSuggestions] = useState(false);
-  const [loading, setLoading] = useState(false);
+type Props = MainTabScreenProps<'Search'>;
+
+const CONDITIONS = ['NEW', 'LIKE_NEW', 'GOOD', 'FAIR'] as const;
+const SORT_OPTIONS = [
+  { value: 'createdAt', label: 'Latest' },
+  { value: 'price', label: 'Price' },
+  { value: 'rating', label: 'Rating' },
+] as const;
+
+export const SearchResultsScreen: React.FC<Props> = ({ navigation, route }) => {
+  const theme = useTheme();
+  const [searchQuery, setSearchQuery] = useState(route.params?.query || '');
+  const [products, setProducts] = useState<Product[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
-  const theme = useTheme();
+  const [showFilters, setShowFilters] = useState(false);
+  const [categories, setCategories] = useState<string[]>([]);
 
-  const loadRecentSearches = async () => {
+  const [filters, setFilters] = useState<SearchFilters>({
+    sortBy: 'createdAt',
+    sortOrder: 'desc',
+  });
+
+  const loadCategories = useCallback(async () => {
     try {
-      const recent = await getRecentSearches();
-      setRecentSearches(recent);
-    } catch (error) {
-      console.error('Failed to load recent searches:', error);
+      const response = await searchService.getCategories();
+      if (response.status === 'success') {
+        setCategories(response.data);
+      }
+    } catch (err) {
+      console.error('Failed to load categories:', err);
     }
-  };
-
-  React.useEffect(() => {
-    loadRecentSearches();
   }, []);
 
-  const fetchSuggestions = useCallback(
-    debounce(async (query: string) => {
-      if (query.length < 2) return;
-      try {
-        const suggestions = await getSuggestedSearches(query);
-        setSuggestions(suggestions);
-      } catch (error) {
-        console.error('Failed to fetch suggestions:', error);
-      }
-    }, 300),
-    []
-  );
-
-  const handleSearch = async (query: string, newSearch = false) => {
-    setSearch(query);
-    if (query.length < 2) {
-      setResults([]);
+  const searchProducts = useCallback(async (pageNum = 1, refresh = false) => {
+    if (!searchQuery.trim() && !filters.category) {
+      setProducts([]);
       return;
     }
 
-    if (newSearch) {
-      setPage(1);
-      setResults([]);
-      setHasMore(true);
-    }
-
-    setLoading(true);
-    setShowSuggestions(false);
-
     try {
-      const response = await searchProducts(query, undefined, newSearch ? 1 : page);
-      if (newSearch) {
-        setResults(response.results);
-      } else {
-        setResults(prev => [...prev, ...response.results]);
+      setIsLoading(true);
+      const response = await searchService.search(searchQuery, filters, pageNum);
+      if (response.status === 'success') {
+        const { products: newProducts, hasMore: more } = response.data;
+        setProducts(prev => refresh ? newProducts : [...prev, ...newProducts]);
+        setHasMore(more);
+        setError(null);
       }
-      setHasMore(response.results.length === response.pageSize);
-    } catch (error) {
-      console.error('Search error:', error);
+    } catch (err: any) {
+      setError(err.message || 'Failed to load products');
     } finally {
-      setLoading(false);
+      setIsLoading(false);
     }
-  };
+  }, [searchQuery, filters]);
 
-  const handleLoadMore = () => {
-    if (!loading && hasMore) {
-      setPage(prev => prev + 1);
-      handleSearch(search);
+  useEffect(() => {
+    loadCategories();
+  }, [loadCategories]);
+
+  useEffect(() => {
+    if (searchQuery || filters.category) {
+      searchProducts(1, true);
     }
-  };
+  }, [searchQuery, filters]);
 
-  const handleInputChange = (text: string) => {
-    setSearch(text);
-    if (text.length >= 2) {
-      setShowSuggestions(true);
-      fetchSuggestions(text);
-    } else {
-      setShowSuggestions(false);
-      setSuggestions([]);
-    }
-  };
+  const handleRefresh = useCallback(async () => {
+    setIsRefreshing(true);
+    await searchProducts(1, true);
+    setIsRefreshing(false);
+    setPage(1);
+  }, [searchProducts]);
 
-  const handleSuggestionPress = (suggestion: string) => {
-    handleSearch(suggestion, true);
-  };
+  const handleLoadMore = useCallback(() => {
+    if (!hasMore || isLoading || isRefreshing) return;
+    setPage(prev => {
+      searchProducts(prev + 1);
+      return prev + 1;
+    });
+  }, [hasMore, isLoading, isRefreshing, searchProducts]);
 
-  const renderSuggestion = ({ item }: { item: string }) => (
-    <TouchableOpacity
-      style={styles.suggestionItem}
-      onPress={() => handleSuggestionPress(item)}
+  const handleSearch = useCallback(() => {
+    setPage(1);
+    searchProducts(1, true);
+  }, [searchProducts]);
+
+  const toggleSortOrder = useCallback(() => {
+    setFilters(prev => ({
+      ...prev,
+      sortOrder: prev.sortOrder === 'asc' ? 'desc' : 'asc',
+    }));
+  }, []);
+
+  const handleProductPress = useCallback((product: Product) => {
+    navigation.getParent()?.navigate('Home', {
+      screen: 'ProductDetails',
+      params: { productId: product.id }
+    });
+  }, [navigation]);
+
+  const styles = StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: theme.colors.background,
+    },
+    header: {
+      padding: 16,
+      borderBottomWidth: 1,
+      borderBottomColor: theme.colors.border,
+    },
+    searchContainer: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    searchInput: {
+      flex: 1,
+    },
+    filterBar: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      padding: 8,
+      borderBottomWidth: 1,
+      borderBottomColor: theme.colors.border,
+    },
+    modalContainer: {
+      flex: 1,
+      backgroundColor: 'rgba(0, 0, 0, 0.5)',
+      justifyContent: 'center',
+      padding: 16,
+    },
+    modalContent: {
+      backgroundColor: theme.colors.background,
+      borderRadius: 8,
+      padding: 16,
+    },
+    modalTitle: {
+      fontSize: 20,
+      fontWeight: 'bold',
+      color: theme.colors.text,
+      marginBottom: 16,
+    },
+    filterSection: {
+      marginBottom: 16,
+    },
+    filterTitle: {
+      fontSize: 16,
+      fontWeight: '500',
+      color: theme.colors.text,
+      marginBottom: 8,
+    },
+    optionsContainer: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 8,
+    },
+    chip: {
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: theme.colors.primary,
+    },
+    chipSelected: {
+      backgroundColor: theme.colors.primary,
+    },
+    chipText: {
+      color: theme.colors.primary,
+    },
+    chipTextSelected: {
+      color: theme.colors.background,
+    },
+    emptyContainer: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+      padding: 16,
+    },
+    emptyText: {
+      fontSize: 16,
+      color: theme.colors.text + '80',
+      textAlign: 'center',
+      marginTop: 8,
+    },
+    loadingMore: {
+      padding: 16,
+    },
+  });
+
+  const renderFiltersModal = () => (
+    <Modal
+      visible={showFilters}
+      transparent
+      animationType="fade"
+      onRequestClose={() => setShowFilters(false)}
     >
-      <Text style={[theme.typography.variants.body1, { color: theme.colors.text.primary }]}>
-        {item}
-      </Text>
-    </TouchableOpacity>
+      <View style={styles.modalContainer}>
+        <Card style={styles.modalContent}>
+          <Text style={styles.modalTitle}>Filters</Text>
+          
+          <View style={styles.filterSection}>
+            <Text style={styles.filterTitle}>Category</Text>
+            <View style={styles.optionsContainer}>
+              {categories.map(category => (
+                <TouchableOpacity
+                  key={category}
+                  style={[
+                    styles.chip,
+                    filters.category === category && styles.chipSelected,
+                  ]}
+                  onPress={() => setFilters(prev => ({
+                    ...prev,
+                    category: prev.category === category ? undefined : category,
+                  }))}
+                >
+                  <Text style={[
+                    styles.chipText,
+                    filters.category === category && styles.chipTextSelected,
+                  ]}>
+                    {category}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+
+          <View style={styles.filterSection}>
+            <Text style={styles.filterTitle}>Sort By</Text>
+            <View style={styles.optionsContainer}>
+              {SORT_OPTIONS.map(option => (
+                <TouchableOpacity
+                  key={option.value}
+                  style={[
+                    styles.chip,
+                    filters.sortBy === option.value && styles.chipSelected,
+                  ]}
+                  onPress={() => setFilters(prev => ({
+                    ...prev,
+                    sortBy: option.value as typeof prev.sortBy,
+                  }))}
+                >
+                  <Text style={[
+                    styles.chipText,
+                    filters.sortBy === option.value && styles.chipTextSelected,
+                  ]}>
+                    {option.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+
+          <Button
+            title="Apply Filters"
+            onPress={() => setShowFilters(false)}
+          />
+        </Card>
+      </View>
+    </Modal>
   );
 
-  const renderItem = ({ item }: { item: ProductPreview }) => (
-    <ProductCard
-      title={item.title}
-      price={item.price}
-      image={{ uri: item.images[0] }}
-      condition={item.condition}
-      style={styles.productCard}
-    />
+  const renderEmpty = () => (
+    <View style={styles.emptyContainer}>
+      <MaterialCommunityIcons
+        name="text-search"
+        size={48}
+        color={theme.colors.text + '80'}
+      />
+      <Text style={styles.emptyText}>
+        {searchQuery
+          ? 'No products found'
+          : 'Enter a search term to find products'}
+      </Text>
+    </View>
   );
+
+  const renderFooter = () => {
+    if (!isLoading || !hasMore) return null;
+    return (
+      <View style={styles.loadingMore}>
+        <ActivityIndicator color={theme.colors.primary} />
+      </View>
+    );
+  };
 
   return (
-    <View style={[styles.container, { backgroundColor: theme.colors.background.default }]}>
-      <SearchBar
-        placeholder="Search products..."
-        onChangeText={handleInputChange}
-        onSubmitEditing={() => handleSearch(search, true)}
-        value={search}
-        platform="default"
-        containerStyle={[
-          styles.searchBarContainer,
-          { backgroundColor: theme.colors.background.default },
-        ]}
-        inputContainerStyle={[
-          styles.searchBarInput,
-          { backgroundColor: theme.colors.background.paper },
-        ]}
-      />
-      
-      {showSuggestions && suggestions.length > 0 ? (
-        <FlatList
-          data={suggestions}
-          renderItem={renderSuggestion}
-          keyExtractor={(item) => item}
-          style={styles.suggestionsList}
-        />
-      ) : search.length < 2 && recentSearches.length > 0 ? (
-        <View style={styles.recentContainer}>
-          <Text style={[theme.typography.variants.subtitle1, styles.recentTitle]}>
-            Recent Searches
-          </Text>
-          <FlatList
-            data={recentSearches}
-            renderItem={renderSuggestion}
-            keyExtractor={(item) => item}
+    <View style={styles.container}>
+      <View style={styles.header}>
+        <View style={styles.searchContainer}>
+          <Input
+            style={styles.searchInput}
+            placeholder="Search products..."
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            onSubmitEditing={handleSearch}
+            returnKeyType="search"
+          />
+          <Button
+            title="Search"
+            onPress={handleSearch}
           />
         </View>
-      ) : (
-        <FlatList
-          data={results}
-          renderItem={renderItem}
-          keyExtractor={(item) => item.id}
-          contentContainerStyle={styles.listContainer}
-          numColumns={2}
-          onEndReached={handleLoadMore}
-          onEndReachedThreshold={0.5}
-          showsVerticalScrollIndicator={false}
-          ListFooterComponent={
-            loading ? (
-              <ActivityIndicator
-                size="large"
-                color={theme.colors.primary.main}
-                style={styles.loader}
-              />
-            ) : null
-          }
+      </View>
+
+      <View style={styles.filterBar}>
+        <Button
+          title="Filters"
+          onPress={() => setShowFilters(true)}
+          variant="outlined"
+          icon="filter-variant"
         />
-      )}
+        <Button
+          title={filters.sortOrder === 'asc' ? 'Sort ↑' : 'Sort ↓'}
+          onPress={toggleSortOrder}
+          variant="outlined"
+          icon="sort"
+        />
+      </View>
+
+      <FlatList
+        data={products}
+        renderItem={({ item }) => (
+          <ProductCard
+            product={item}
+            onPress={() => handleProductPress(item)}
+          />
+        )}
+        keyExtractor={item => item.id}
+        refreshControl={
+          <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />
+        }
+        onEndReached={handleLoadMore}
+        onEndReachedThreshold={0.5}
+        ListEmptyComponent={renderEmpty}
+        ListFooterComponent={renderFooter}
+        numColumns={2}
+        columnWrapperStyle={{ gap: 8, padding: 8 }}
+      />
+
+      {renderFiltersModal()}
     </View>
   );
 };
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  searchBarContainer: {
-    borderTopWidth: 0,
-    borderBottomWidth: 0,
-    paddingHorizontal: 16,
-    paddingTop: 8,
-    paddingBottom: 8,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-  },
-  searchBarInput: {
-    borderRadius: 8,
-  },
-  listContainer: {
-    padding: 8,
-  },
-  productCard: {
-    flex: 1,
-    margin: 8,
-  },
-  suggestionsList: {
-    backgroundColor: 'white',
-    borderRadius: 8,
-    margin: 8,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-  },
-  suggestionItem: {
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#eee',
-  },
-  recentContainer: {
-    padding: 16,
-  },
-  recentTitle: {
-    marginBottom: 8,
-  },
-  loader: {
-    marginVertical: 16,
-  },
-});

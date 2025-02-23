@@ -1,126 +1,184 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   View,
   StyleSheet,
   FlatList,
   RefreshControl,
-  ListRenderItem,
-  Image,
+  ActivityIndicator,
+  TouchableOpacity,
 } from 'react-native';
-import { CompositeScreenProps } from '@react-navigation/native';
-import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
-import { MainStackParamList, MainTabParamList } from '../../navigation/types';
-import { ProductCard, LoadingScreen } from '../../components';
-import { useTheme } from '../../theme';
-import { ProductPreview, ProductCondition } from '../../types/product';
+import { useTheme } from '@react-navigation/native';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { HomeScreenProps } from '../../navigation/types';
+import { ProductCard } from '../../components/ProductCard/ProductCard';
+import { Input } from '../../components/Input/Input';
+import productService, { ProductFilters } from '../../services/product';
 
-type Props = CompositeScreenProps<
-  BottomTabScreenProps<MainTabParamList, 'Home'>,
-  NativeStackScreenProps<MainStackParamList>
->;
+type Props = HomeScreenProps<'HomeScreen'>;
 
 export const HomeScreen: React.FC<Props> = ({ navigation }) => {
   const theme = useTheme();
+  const [searchQuery, setSearchQuery] = useState('');
+  const [products, setProducts] = useState<Product[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [products, setProducts] = useState<ProductPreview[]>([]);
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(true);
+  const [filters, setFilters] = useState<ProductFilters>({});
 
-  const fetchProducts = async (refresh = false) => {
-    if (refresh) {
-      setIsRefreshing(true);
-    }
+  const loadProducts = useCallback(async (pageNum = 1, refresh = false) => {
+    if (!refresh && !hasMore) return;
 
     try {
-      // TODO: Implement API call
-      await new Promise(resolve => setTimeout(resolve, 1500)); // Simulate API call
-      
-      // Temporary mock data
-      const conditions: ProductCondition[] = ['new', 'like-new', 'good', 'fair'];
-      const locations = ['North Campus', 'South Campus', 'Main Campus', 'Library'];
-      const mockProducts: ProductPreview[] = Array(10).fill(null).map((_, index) => ({
-        id: index.toString(),
-        title: `Product ${index + 1}`,
-        price: Math.floor(Math.random() * 1000) + 100,
-        condition: conditions[Math.floor(Math.random() * conditions.length)],
-        images: ['https://via.placeholder.com/300'],
-        location: locations[Math.floor(Math.random() * locations.length)],
-      }));
+      const response = await productService.getProducts({
+        page: pageNum,
+        limit: 20,
+        filters,
+      });
 
-      setProducts(mockProducts);
+      if (response.status === 'success') {
+        const { products: newProducts, hasMore: more } = response.data;
+        setProducts(prev => (pageNum === 1 ? newProducts : [...prev, ...newProducts]));
+        setHasMore(more);
+        setPage(pageNum);
+      }
     } catch (error) {
-      // TODO: Handle error
-      console.error('Failed to fetch products:', error);
+      console.error('Failed to load products:', error);
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
     }
+  }, [filters, hasMore]);
+
+  useEffect(() => {
+    loadProducts();
+  }, [loadProducts]);
+
+  const handleRefresh = useCallback(() => {
+    setIsRefreshing(true);
+    loadProducts(1, true);
+  }, [loadProducts]);
+
+  const handleLoadMore = () => {
+    if (!isLoading && hasMore) {
+      loadProducts(page + 1);
+    }
   };
 
-  React.useEffect(() => {
-    fetchProducts();
-  }, []);
-
-  const handleRefresh = () => {
-    fetchProducts(true);
+  const handleSearch = () => {
+    if (searchQuery.trim()) {
+      navigation.navigate('Search', { query: searchQuery });
+    }
   };
 
-  const handleProductPress = (product: ProductPreview) => {
-    navigation.navigate('ProductDetails', {
-      productId: product.id,
-      title: product.title,
-    });
+  const handleCreateProduct = () => {
+    navigation.navigate('CreateProduct');
   };
 
-  const renderProduct: ListRenderItem<ProductPreview> = ({ item }) => (
-    <ProductCard
-      title={item.title}
-      price={item.price}
-      image={{ uri: item.images[0] }}
-      condition={item.condition}
-      onPress={() => handleProductPress(item)}
-      style={styles.productCard}
-    />
-  );
+  const styles = StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: theme.colors.background,
+    },
+    header: {
+      padding: 16,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    searchContainer: {
+      flex: 1,
+    },
+    iconButton: {
+      padding: 8,
+    },
+    content: {
+      flex: 1,
+    },
+    productList: {
+      padding: 16,
+    },
+    fab: {
+      position: 'absolute',
+      right: 16,
+      bottom: 16,
+      backgroundColor: theme.colors.primary,
+      width: 56,
+      height: 56,
+      borderRadius: 28,
+      justifyContent: 'center',
+      alignItems: 'center',
+      elevation: 4,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.25,
+      shadowRadius: 4,
+    },
+    loadingContainer: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+  });
 
-  if (isLoading) {
-    return <LoadingScreen message="Loading products..." />;
+  if (isLoading && page === 1) {
+    return (
+      <View style={[styles.container, styles.loadingContainer]}>
+        <ActivityIndicator size="large" color={theme.colors.primary} />
+      </View>
+    );
   }
 
   return (
-    <View style={[styles.container, { backgroundColor: theme.colors.background.default }]}>
+    <View style={styles.container}>
+      <View style={styles.header}>
+        <View style={styles.searchContainer}>
+          <Input
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            placeholder="Search products..."
+            leftIcon="magnify"
+            onSubmitEditing={handleSearch}
+          />
+        </View>
+        <TouchableOpacity style={styles.iconButton} onPress={() => {}}>
+          <MaterialCommunityIcons
+            name="filter-variant"
+            size={24}
+            color={Object.keys(filters).length > 0 ? theme.colors.primary : theme.colors.text}
+          />
+        </TouchableOpacity>
+      </View>
+
       <FlatList
         data={products}
-        renderItem={renderProduct}
-        keyExtractor={(item) => item.id}
-        numColumns={2}
-        columnWrapperStyle={styles.columnWrapper}
-        contentContainerStyle={styles.listContent}
-        refreshControl={
-          <RefreshControl
-            refreshing={isRefreshing}
-            onRefresh={handleRefresh}
-            colors={[theme.colors.primary.main]}
-            tintColor={theme.colors.primary.main}
+        renderItem={({ item }) => (
+          <ProductCard
+            product={item}
+            onPress={() => navigation.navigate('ProductDetails', { productId: item.id })}
           />
+        )}
+        keyExtractor={(item) => item.id}
+        contentContainerStyle={styles.productList}
+        onEndReached={handleLoadMore}
+        onEndReachedThreshold={0.5}
+        refreshControl={
+          <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />
+        }
+        ListFooterComponent={() =>
+          isLoading && hasMore ? (
+            <ActivityIndicator
+              size="small"
+              color={theme.colors.primary}
+              style={{ padding: 16 }}
+            />
+          ) : null
         }
       />
+
+      <TouchableOpacity style={styles.fab} onPress={handleCreateProduct}>
+        <MaterialCommunityIcons name="plus" size={24} color="#fff" />
+      </TouchableOpacity>
     </View>
   );
 };
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  listContent: {
-    padding: 16,
-  },
-  columnWrapper: {
-    justifyContent: 'space-between',
-  },
-  productCard: {
-    width: '48%',
-    marginBottom: 16,
-  },
-});

@@ -1,209 +1,143 @@
-import React from 'react';
-import {
-  View,
-  ScrollView,
-  Text,
-  StyleSheet,
-  Image,
-  Dimensions,
-  Pressable,
-} from 'react-native';
-import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { MainStackParamList } from '../../navigation/types';
-import { useTheme } from '../../theme';
-import { Button, LoadingScreen } from '../../components';
-import { ProductDetails } from '../../types/product';
-import Ionicons from '@expo/vector-icons/Ionicons';
+import React, { useState } from 'react';
+import { View, Text, StyleSheet, ScrollView, Image, Alert } from 'react-native';
+import { useTheme } from '@react-navigation/native';
+import { Button } from '../../components/Button/Button';
+import { HomeScreenProps } from '../../navigation/types';
+import { Card } from '../../components/Card/Card';
+import { Product } from '../../components/ProductCard/ProductCard';
+import { useAuth } from '../../contexts/AuthContext';
 
-type Props = NativeStackScreenProps<MainStackParamList, 'ProductDetails'>;
+type Props = HomeScreenProps<'ProductDetails'>;
 
-export const ProductDetailsScreen: React.FC<Props> = ({ navigation, route }) => {
+export const ProductDetailsScreen: React.FC<Props> = ({ 
+  route,
+  navigation 
+}) => {
   const theme = useTheme();
-  const [product, setProduct] = React.useState<ProductDetails | null>(null);
-  const [isLoading, setIsLoading] = React.useState(true);
+  const { user } = useAuth();
+  const { productId } = route.params;
+  const [isLoading, setIsLoading] = useState(false);
 
-  React.useEffect(() => {
-    const fetchProduct = async () => {
-      try {
-        // TODO: Replace with actual API call
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        
-        // Mock data
-        setProduct({
-          id: route.params.productId,
-          title: route.params.title,
-          price: 999,
-          description: 'Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.',
-          category: 'Electronics',
-          condition: 'like-new',
-          images: ['https://via.placeholder.com/600'],
-          location: 'North Campus',
-          seller: {
-            id: '1',
-            name: 'John Doe',
-            rating: 4.5,
-          },
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-          status: 'available',
-        });
-      } catch (error) {
-        console.error('Failed to fetch product:', error);
-      } finally {
-        setIsLoading(false);
-      }
-    };
+  // Mock data - replace with API call
+  const product: Product = {
+    id: productId,
+    title: 'Engineering Textbook',
+    price: 500,
+    image: 'https://example.com/book.jpg',
+    description: 'Used engineering textbook in good condition. Perfect for first-year students. Includes practice problems and solutions.',
+    seller: {
+      id: 'user1',
+      name: 'John Doe',
+    },
+  };
 
-    fetchProduct();
-  }, [route.params.productId]);
+  const handleContactSeller = () => {
+    // Navigate to Chat screen directly within the same stack
+    navigation.navigate('Chat', { recipientId: product.seller.id });
+  };
 
-  const handleContact = () => {
-    if (product) {
-      navigation.navigate('Chat', {
-        recipientId: product.seller.id,
-        recipientName: product.seller.name,
-      });
+  const handleBuyNow = async () => {
+    setIsLoading(true);
+    try {
+      // TODO: Implement purchase logic with API call
+      Alert.alert('Success', 'Transaction initiated. Please check your notifications.');
+    } catch (error) {
+      Alert.alert('Error', 'Failed to initiate transaction. Please try again.');
+    } finally {
+      setIsLoading(false);
     }
   };
 
-  if (isLoading || !product) {
-    return <LoadingScreen message="Loading product details..." />;
-  }
+  const styles = StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: theme.colors.background,
+    },
+    scrollContent: {
+      padding: 16,
+    },
+    image: {
+      width: '100%',
+      height: 300,
+      borderRadius: 8,
+      marginBottom: 16,
+    },
+    infoCard: {
+      padding: 16,
+      marginBottom: 16,
+    },
+    title: {
+      fontSize: 24,
+      fontWeight: 'bold',
+      color: theme.colors.text,
+      marginBottom: 8,
+    },
+    price: {
+      fontSize: 20,
+      fontWeight: '600',
+      color: theme.colors.primary,
+      marginBottom: 16,
+    },
+    description: {
+      fontSize: 16,
+      color: theme.colors.text,
+      marginBottom: 16,
+      lineHeight: 24,
+    },
+    sellerInfo: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: 24,
+    },
+    sellerName: {
+      fontSize: 16,
+      color: theme.colors.text,
+    },
+    buttonsContainer: {
+      flexDirection: 'row',
+      gap: 12,
+    },
+  });
+
+  const isOwnProduct = user?._id === product.seller.id;
 
   return (
-    <View style={[styles.container, { backgroundColor: theme.colors.background.default }]}>
-      <ScrollView>
-        <Image
-          source={{ uri: product.images[0] }}
-          style={styles.image}
-          resizeMode="cover"
-        />
-        <View style={styles.content}>
-          <Text style={[theme.typography.variants.h4, styles.title]}>
-            {product.title}
+    <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
+      <Image
+        source={{ uri: product.image }}
+        style={styles.image}
+        resizeMode="cover"
+      />
+      
+      <Card style={styles.infoCard}>
+        <Text style={styles.title}>{product.title}</Text>
+        <Text style={styles.price}>₹{product.price}</Text>
+        <Text style={styles.description}>{product.description}</Text>
+        
+        <View style={styles.sellerInfo}>
+          <Text style={styles.sellerName}>
+            Seller: {product.seller.name}
           </Text>
-          <Text style={[theme.typography.variants.h3, styles.price]}>
-            ₹{product.price.toLocaleString()}
-          </Text>
-
-          <View style={styles.row}>
-            <View style={styles.infoItem}>
-              <Text style={[theme.typography.variants.caption, styles.infoLabel]}>
-                Condition
-              </Text>
-              <Text style={theme.typography.variants.subtitle1}>
-                {product.condition}
-              </Text>
-            </View>
-            <View style={styles.infoItem}>
-              <Text style={[theme.typography.variants.caption, styles.infoLabel]}>
-                Category
-              </Text>
-              <Text style={theme.typography.variants.subtitle1}>
-                {product.category}
-              </Text>
-            </View>
-            <View style={styles.infoItem}>
-              <Text style={[theme.typography.variants.caption, styles.infoLabel]}>
-                Status
-              </Text>
-              <Text style={theme.typography.variants.subtitle1}>
-                {product.status}
-              </Text>
-            </View>
-          </View>
-
-          <Text style={[theme.typography.variants.subtitle1, styles.sectionTitle]}>
-            Description
-          </Text>
-          <Text style={[theme.typography.variants.body1, styles.description]}>
-            {product.description}
-          </Text>
-
-          <Pressable
-            style={styles.sellerContainer}
-            onPress={() => {/* TODO: Navigate to seller profile */}}
-          >
-            <View style={styles.sellerInfo}>
-              <Text style={theme.typography.variants.subtitle1}>
-                {product.seller.name}
-              </Text>
-              <Text style={[theme.typography.variants.caption, { color: theme.colors.text.secondary }]}>
-                Rating: {product.seller.rating.toFixed(1)} ★
-              </Text>
-            </View>
-            <Ionicons
-              name="chevron-forward"
-              size={24}
-              color={theme.colors.text.secondary}
-            />
-          </Pressable>
         </View>
-      </ScrollView>
 
-      <View style={[styles.footer, { borderTopColor: theme.colors.border.main }]}>
-        <Button
-          title="Contact Seller"
-          onPress={handleContact}
-          fullWidth
-          size="large"
-        />
-      </View>
-    </View>
+        {!isOwnProduct && (
+          <View style={styles.buttonsContainer}>
+            <Button
+              title="Contact Seller"
+              onPress={handleContactSeller}
+              style={{ flex: 1 }}
+            />
+            <Button
+              title="Buy Now"
+              onPress={handleBuyNow}
+              loading={isLoading}
+              disabled={isLoading}
+              style={{ flex: 1 }}
+            />
+          </View>
+        )}
+      </Card>
+    </ScrollView>
   );
 };
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  image: {
-    width: Dimensions.get('window').width,
-    height: Dimensions.get('window').width,
-  },
-  content: {
-    padding: 16,
-  },
-  title: {
-    marginBottom: 8,
-  },
-  price: {
-    marginBottom: 16,
-  },
-  row: {
-    flexDirection: 'row',
-    marginBottom: 24,
-  },
-  infoItem: {
-    marginRight: 32,
-  },
-  infoLabel: {
-    marginBottom: 4,
-    textTransform: 'uppercase',
-  },
-  sectionTitle: {
-    marginBottom: 8,
-    fontWeight: '600',
-  },
-  description: {
-    marginBottom: 24,
-  },
-  sellerContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 12,
-  },
-  sellerAvatar: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    marginRight: 12,
-  },
-  sellerInfo: {
-    flex: 1,
-  },
-  footer: {
-    padding: 16,
-    borderTopWidth: 1,
-  },
-});

@@ -1,63 +1,34 @@
-import React from 'react';
-import { StyleSheet, ViewStyle, Pressable, StyleProp } from 'react-native';
-import { useTheme } from '../../theme';
-import Animated, {
-  useAnimatedStyle,
-  useSharedValue,
-  withSpring,
-} from 'react-native-reanimated';
+import React, { ReactNode } from 'react';
+import { View, StyleSheet, ViewStyle } from 'react-native';
+import { useTheme } from '@react-navigation/native';
 
-const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
-
-export interface CardProps {
-  children: React.ReactNode;
-  onPress?: () => void;
-  style?: StyleProp<ViewStyle>;
+interface CardProps {
+  children: ReactNode;
+  style?: ViewStyle;
 }
 
-export const Card: React.FC<CardProps> = ({
-  children,
-  onPress,
-  style,
-}) => {
+export const Card: React.FC<CardProps> = ({ children, style }) => {
   const theme = useTheme();
-  const scale = useSharedValue(1);
 
-  const animatedStyle = useAnimatedStyle(() => {
-    return {
-      transform: [{ scale: scale.value }],
-    };
-  });
-
-  const handlePressIn = () => {
-    if (onPress) {
-      scale.value = withSpring(0.98);
-    }
-  };
-
-  const handlePressOut = () => {
-    if (onPress) {
-      scale.value = withSpring(1);
-    }
-  };
-
-  const baseStyles = StyleSheet.create({
-    container: {
-      backgroundColor: theme.colors.background.paper,
-      borderRadius: theme.spacing.radius.md,
-      padding: theme.spacing.sm,
-      ...theme.shadows.sm,
+  const styles = StyleSheet.create({
+    card: {
+      backgroundColor: theme.colors.card,
+      borderRadius: 8,
+      elevation: 4,
+      shadowColor: '#000',
+      shadowOffset: {
+        width: 0,
+        height: 2,
+      },
+      shadowOpacity: 0.23,
+      shadowRadius: 2.62,
+      overflow: 'hidden',
     },
   });
 
   return (
-    <AnimatedPressable
-      onPress={onPress}
-      onPressIn={handlePressIn}
-      onPressOut={handlePressOut}
-      style={[baseStyles.container, style, animatedStyle]}
-    >
+    <View style={[styles.card, style]}>
       {children}
-    </AnimatedPressable>
+    </View>
   );
 };

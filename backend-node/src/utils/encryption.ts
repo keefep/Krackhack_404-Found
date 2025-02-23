@@ -1,22 +1,81 @@
 import crypto from 'crypto';
 
-const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || 'default-key-32chars-security-key-32'; // 32 bytes
-const IV_LENGTH = 16; // For AES, this is always 16
+const ALGORITHM = 'aes-256-gcm';
+const IV_LENGTH = 16;
+const SALT_LENGTH = 64;
+const AUTH_TAG_LENGTH = 16;
+const KEY_LENGTH = 32;
 
-export const encryptMessage = (text: string): string => {
+export interface EncryptedMessage {
+  iv: string;
+  encryptedData: string;
+  authTag: string;
+  salt: string;
+}
+
+export function generateEncryptionKey(): string {
+  return crypto.randomBytes(KEY_LENGTH).toString('hex');
+}
+
+export function deriveKey(sharedSecret: string, salt: Buffer): Buffer {
+  return crypto.pbkdf2Sync(sharedSecret, salt, 100000, KEY_LENGTH, 'sha256');
+}
+
+export function encrypt(text: string, sharedSecret: string): EncryptedMessage {
+  const salt = crypto.randomBytes(SALT_LENGTH);
   const iv = crypto.randomBytes(IV_LENGTH);
-  const cipher = crypto.createCipheriv('aes-256-cbc', Buffer.from(ENCRYPTION_KEY), iv);
-  let encrypted = cipher.update(text);
-  encrypted = Buffer.concat([encrypted, cipher.final()]);
-  return iv.toString('hex') + ':' + encrypted.toString('hex');
-};
+  const key = deriveKey(sharedSecret, salt);
+  
+  const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
+  let encryptedData = cipher.update(text, 'utf8', 'hex');
+  encryptedData += cipher.final('hex');
+  
+  const authTag = cipher.getAuthTag();
 
-export const decryptMessage = (text: string): string => {
-  const textParts = text.split(':');
-  const iv = Buffer.from(textParts.shift() || '', 'hex');
-  const encryptedText = Buffer.from(textParts.join(':'), 'hex');
-  const decipher = crypto.createDecipheriv('aes-256-cbc', Buffer.from(ENCRYPTION_KEY), iv);
-  let decrypted = decipher.update(encryptedText);
-  decrypted = Buffer.concat([decrypted, decipher.final()]);
-  return decrypted.toString();
-};
+  return {
+    iv: iv.toString('hex'),
+    encryptedData,
+    authTag: authTag.toString('hex'),
+    salt: salt.toString('hex'),
+  };
+}
+
+export function decrypt(
+  encryptedMessage: EncryptedMessage,
+  sharedSecret: string
+): string {
+  const { iv, encryptedData, authTag, salt } = encryptedMessage;
+  const key = deriveKey(sharedSecret, Buffer.from(salt, 'hex'));
+  
+  const decipher = crypto.createDecipheriv(
+    ALGORITHM,
+    key,
+    Buffer.from(iv, 'hex')
+  );
+  
+  decipher.setAuthTag(Buffer.from(authTag, 'hex'));
+  
+  let decrypted = decipher.update(encryptedData, 'hex', 'utf8');
+  decrypted += decipher.final('utf8');
+  
+  return decrypted;
+}
+
+// Function to generate a shared secret for a chat room
+export function generateChatRoomSecret(): string {
+  return crypto.randomBytes(32).toString('hex');
+}
+
+// Utility function to verify encryption is working
+export function testEncryption(): boolean {
+  try {
+    const testMessage = 'Test message';
+    const secret = generateChatRoomSecret();
+    const encrypted = encrypt(testMessage, secret);
+    const decrypted = decrypt(encrypted, secret);
+    return testMessage === decrypted;
+  } catch (error) {
+    console.error('Encryption test failed:', error);
+    return false;
+  }
+}

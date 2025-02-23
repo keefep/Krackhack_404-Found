@@ -1,92 +1,54 @@
 import { Response, NextFunction } from 'express';
-import { Product } from '../models/Product';
-import { ValidationError } from '../utils/errors';
-import { processImages, deleteImages } from '../utils/upload';
-import { AuthRequest, AuthFileRequest } from '../types/express';
-import mongoose from 'mongoose';
+import { AuthRequest } from '../middleware/auth';
+import { BAD_REQUEST, NOT_FOUND, FORBIDDEN } from '../utils/errors';
+import Product from '../models/Product';
+import { processUploadedFiles, deleteFiles } from '../utils/upload';
+import { Types } from 'mongoose';
 
-export const uploadProductImages = async (
-  req: AuthFileRequest,
-  res: Response,
-  next: NextFunction
-) => {
-  try {
-    if (!req.files || !Array.isArray(req.files) || req.files.length === 0) {
-      throw new ValidationError('No images uploaded');
-    }
-
-    const imageUrls = await processImages(req.files);
-
-    res.status(200).json({
-      status: 'success',
-      data: {
-        images: imageUrls
-      }
-    });
-  } catch (error) {
-    next(error);
-  }
+// Helper function to check if seller ID matches
+const isSellerMatch = (sellerId: Types.ObjectId | null, userId: Types.ObjectId): boolean => {
+  return sellerId !== null && sellerId.toString() === userId.toString();
 };
 
-export const createProduct = async (
-  req: AuthRequest,
-  res: Response,
-  next: NextFunction
-) => {
+// Get products with filtering and pagination
+export const getProducts = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const product = await Product.create({
-      ...req.body,
-      seller: req.user?._id,
-    });
+    const { page = 1, limit = 20, category, condition, status, minPrice, maxPrice, sortBy, sortOrder } = req.query;
 
-    res.status(201).json({
-      status: 'success',
-      data: {
-        product,
-      },
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const getProducts = async (
-  req: AuthRequest,
-  res: Response,
-  next: NextFunction
-) => {
-  try {
-    const { category, condition, status, minPrice, maxPrice } = req.query;
-    const query: any = { deletedAt: null };
-
+    // Build query
+    const query: Record<string, any> = {};
     if (category) query.category = category;
     if (condition) query.condition = condition;
     if (status) query.status = status;
     if (minPrice || maxPrice) {
       query.price = {};
-      if (minPrice) query.price.$gte = parseFloat(minPrice as string);
-      if (maxPrice) query.price.$lte = parseFloat(maxPrice as string);
+      if (minPrice) query.price.$gte = Number(minPrice);
+      if (maxPrice) query.price.$lte = Number(maxPrice);
     }
 
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 20;
-    const skip = (page - 1) * limit;
+    // Build sort
+    const sort: Record<string, any> = {};
+    if (sortBy) {
+      sort[sortBy as string] = sortOrder === 'desc' ? -1 : 1;
+    } else {
+      sort.createdAt = -1;
+    }
 
     const products = await Product.find(query)
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit)
-      .populate('seller', 'name email rating');
+      .sort(sort)
+      .skip((Number(page) - 1) * Number(limit))
+      .limit(Number(limit))
+      .populate('seller', 'name email');
 
     const total = await Product.countDocuments(query);
 
-    res.status(200).json({
+    res.json({
       status: 'success',
       data: {
         products,
         total,
-        page,
-        pages: Math.ceil(total / limit),
+        pages: Math.ceil(total / Number(limit)),
+        currentPage: Number(page),
       },
     });
   } catch (error) {
@@ -94,193 +56,168 @@ export const getProducts = async (
   }
 };
 
-export const getProduct = async (
-  req: AuthRequest,
-  res: Response,
-  next: NextFunction
-) => {
+// Search products
+export const searchProducts = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const product = await Product.findById(req.params.id).populate(
-      'seller',
-      'name email rating'
-    );
+    const { q, ...filters } = req.query;
+    const query: Record<string, any> = {};
 
-    if (!product) {
-      throw new ValidationError('Product not found');
+    // Text search if query provided
+    if (q) {
+      query.$text = { $search: q as string };
     }
 
-    // Increment view count
-    product.viewCount += 1;
-    await product.save();
-
-    res.status(200).json({
-      status: 'success',
-      data: {
-        product,
-      },
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const updateProduct = async (
-  req: AuthRequest,
-  res: Response,
-  next: NextFunction
-) => {
-  try {
-    const oldProduct = await Product.findOne({
-      _id: req.params.id,
-      seller: req.user?._id,
-    });
-
-    if (!oldProduct) {
-      throw new ValidationError('Product not found or unauthorized');
+    // Apply filters
+    if (filters.category) query.category = filters.category;
+    if (filters.condition) query.condition = filters.condition;
+    if (filters.status) query.status = filters.status;
+    if (filters.minPrice || filters.maxPrice) {
+      query.price = {};
+      if (filters.minPrice) query.price.$gte = Number(filters.minPrice);
+      if (filters.maxPrice) query.price.$lte = Number(filters.maxPrice);
     }
-
-    // If there are new images, delete old ones
-    if (req.body.images && oldProduct.images) {
-      const removedImages = oldProduct.images.filter(
-        (img) => !req.body.images.includes(img)
-      );
-      if (removedImages.length > 0) {
-        await deleteImages(removedImages);
-      }
-    }
-
-    const product = await Product.findOneAndUpdate(
-      {
-        _id: req.params.id,
-        seller: req.user?._id,
-      },
-      req.body,
-      {
-        new: true,
-        runValidators: true,
-      }
-    );
-
-    res.status(200).json({
-      status: 'success',
-      data: {
-        product,
-      },
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const deleteProduct = async (
-  req: AuthRequest,
-  res: Response,
-  next: NextFunction
-) => {
-  try {
-    const product = await Product.findOne({
-      _id: req.params.id,
-      seller: req.user?._id,
-    });
-
-    if (!product) {
-      throw new ValidationError('Product not found or unauthorized');
-    }
-
-    // Delete associated images
-    if (product.images && product.images.length > 0) {
-      await deleteImages(product.images);
-    }
-
-    // Soft delete the product
-    product.deletedAt = new Date();
-    product.status = 'sold';
-    await product.save();
-
-    res.status(200).json({
-      status: 'success',
-      data: null,
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const searchProducts = async (
-  req: AuthRequest,
-  res: Response,
-  next: NextFunction
-) => {
-  try {
-    const { q } = req.query;
-    if (!q) {
-      throw new ValidationError('Search query is required');
-    }
-
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 20;
-    const skip = (page - 1) * limit;
-
-    const query = {
-      $text: { $search: q as string },
-      deletedAt: null,
-    };
 
     const products = await Product.find(query)
-      .sort({ score: { $meta: 'textScore' } })
-      .skip(skip)
-      .limit(limit)
-      .populate('seller', 'name email rating');
+      .sort(q ? { score: { $meta: 'textScore' } } : { createdAt: -1 })
+      .populate('seller', 'name email');
 
-    const total = await Product.countDocuments(query);
-
-    res.status(200).json({
+    res.json({
       status: 'success',
-      data: {
-        products,
-        total,
-        page,
-        pages: Math.ceil(total / limit),
-      },
+      data: products,
     });
   } catch (error) {
     next(error);
   }
 };
 
-export const getSellerProducts = async (
-  req: AuthRequest,
-  res: Response,
-  next: NextFunction
-) => {
+// Get single product
+export const getProduct = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 20;
-    const skip = (page - 1) * limit;
-
-    const products = await Product.find({
-      seller: req.user?._id,
-      deletedAt: null,
-    })
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit);
-
-    const total = await Product.countDocuments({
-      seller: req.user?._id,
-      deletedAt: null,
-    });
-
-    res.status(200).json({
+    const product = await Product.findById(req.params.id).populate('seller', 'name email');
+    if (!product) {
+      throw NOT_FOUND('Product not found');
+    }
+    res.json({
       status: 'success',
-      data: {
-        products,
-        total,
-        page,
-        pages: Math.ceil(total / limit),
-      },
+      data: product,
     });
   } catch (error) {
+    next(error);
+  }
+};
+
+// Create new product
+export const createProduct = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const product = await Product.create({
+      ...req.body,
+      seller: req.user._id,
+    });
+
+    res.status(201).json({
+      status: 'success',
+      data: product,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Update product
+export const updateProduct = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const product = await Product.findById(req.params.id);
+    if (!product) {
+      throw NOT_FOUND('Product not found');
+    }
+
+    if (!isSellerMatch(product.seller as Types.ObjectId, req.user._id)) {
+      throw FORBIDDEN('You can only update your own products');
+    }
+
+    // If images are being updated, delete old ones
+    if (req.body.images && product.images) {
+      const oldImages = product.images.map(img => img.split('/').pop() || '');
+      deleteFiles(oldImages);
+    }
+
+    const updatedProduct = await Product.findByIdAndUpdate(
+      req.params.id,
+      { $set: req.body },
+      { new: true, runValidators: true }
+    ).populate('seller', 'name email');
+
+    res.json({
+      status: 'success',
+      data: updatedProduct,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Delete product
+export const deleteProduct = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const product = await Product.findById(req.params.id);
+    if (!product) {
+      throw NOT_FOUND('Product not found');
+    }
+
+    if (!isSellerMatch(product.seller as Types.ObjectId, req.user._id)) {
+      throw FORBIDDEN('You can only delete your own products');
+    }
+
+    // Delete product images
+    const images = product.images.map(img => img.split('/').pop() || '');
+    deleteFiles(images);
+
+    await product.deleteOne();
+
+    res.json({
+      status: 'success',
+      message: 'Product deleted successfully',
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Get seller's products
+export const getSellerProducts = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const products = await Product.find({ seller: req.user._id })
+      .sort({ createdAt: -1 })
+      .populate('seller', 'name email');
+
+    res.json({
+      status: 'success',
+      data: products,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Upload product images
+export const uploadProductImages = async (req: AuthRequest, res: Response, next: NextFunction) => {
+  try {
+    if (!req.files || !Array.isArray(req.files)) {
+      throw BAD_REQUEST('No images uploaded');
+    }
+
+    const results = processUploadedFiles(req.files);
+
+    res.json({
+      status: 'success',
+      data: results.map(img => img.path),
+    });
+  } catch (error) {
+    // If error occurs, clean up any uploaded files
+    if (req.files && Array.isArray(req.files)) {
+      const filenames = req.files.map(f => f.filename);
+      deleteFiles(filenames);
+    }
     next(error);
   }
 };

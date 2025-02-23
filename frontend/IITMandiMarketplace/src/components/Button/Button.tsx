@@ -1,169 +1,132 @@
 import React from 'react';
-import { 
-  Pressable, 
-  Text, 
-  StyleSheet, 
-  ViewStyle, 
+import {
+  TouchableOpacity,
+  Text,
+  StyleSheet,
+  ActivityIndicator,
+  StyleProp,
+  ViewStyle,
   TextStyle,
-  ActivityIndicator
 } from 'react-native';
-import Animated, {
-  useAnimatedStyle,
-  useSharedValue,
-  withSequence,
-  withTiming,
-  runOnJS,
-} from 'react-native-reanimated';
-import { useTheme } from '../../theme';
-import { pressAnimation } from '../../utils/animations';
+import { useTheme } from '@react-navigation/native';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import type { MaterialCommunityIcons as IconType } from '@expo/vector-icons';
 
-const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
+type ButtonVariant = 'contained' | 'outlined' | 'text';
 
 export interface ButtonProps {
-  onPress: () => void;
   title: string;
-  variant?: 'primary' | 'secondary' | 'outlined' | 'text';
-  size?: 'small' | 'medium' | 'large';
+  onPress: () => void;
+  variant?: ButtonVariant;
   disabled?: boolean;
   loading?: boolean;
-  style?: ViewStyle;
-  textStyle?: TextStyle;
-  fullWidth?: boolean;
+  style?: StyleProp<ViewStyle>;
+  textStyle?: StyleProp<TextStyle>;
+  icon?: keyof typeof MaterialCommunityIcons.glyphMap;
+  iconPosition?: 'left' | 'right';
 }
 
 export const Button: React.FC<ButtonProps> = ({
-  onPress,
   title,
-  variant = 'primary',
-  size = 'medium',
+  onPress,
+  variant = 'contained',
   disabled = false,
   loading = false,
   style,
   textStyle,
-  fullWidth = false,
+  icon,
+  iconPosition = 'left',
 }) => {
   const theme = useTheme();
-  const scale = useSharedValue(1);
-  
-  const getBackgroundColor = () => {
-    if (disabled) return theme.colors.neutral[300];
+
+  const getVariantStyles = () => {
     switch (variant) {
-      case 'primary':
-        return theme.colors.primary.main;
-      case 'secondary':
-        return theme.colors.secondary.main;
       case 'outlined':
+        return {
+          button: {
+            backgroundColor: 'transparent',
+            borderWidth: 1,
+            borderColor: theme.colors.primary,
+          },
+          text: {
+            color: theme.colors.primary,
+          },
+        };
       case 'text':
-        return 'transparent';
+        return {
+          button: {
+            backgroundColor: 'transparent',
+            paddingHorizontal: 8,
+            minHeight: undefined,
+          },
+          text: {
+            color: theme.colors.primary,
+          },
+        };
       default:
-        return theme.colors.primary.main;
-    }
-  };
-
-  const getBorderColor = () => {
-    if (disabled) return theme.colors.neutral[300];
-    switch (variant) {
-      case 'outlined':
-        return theme.colors.primary.main;
-      default:
-        return 'transparent';
-    }
-  };
-
-  const getTextColor = () => {
-    if (disabled) return theme.colors.neutral[500];
-    switch (variant) {
-      case 'primary':
-        return theme.colors.primary.contrast;
-      case 'secondary':
-        return theme.colors.secondary.contrast;
-      case 'outlined':
-      case 'text':
-        return theme.colors.primary.main;
-      default:
-        return theme.colors.primary.contrast;
-    }
-  };
-
-  const getPadding = () => {
-    switch (size) {
-      case 'small':
-        return theme.spacing.components.buttonPadding - 4;
-      case 'large':
-        return theme.spacing.components.buttonPadding + 4;
-      default:
-        return theme.spacing.components.buttonPadding;
-    }
-  };
-
-  const animatedStyle = useAnimatedStyle(() => {
-    return {
-      transform: [{ scale: scale.value }],
-    };
-  });
-
-  const handlePress = () => {
-    if (!disabled && !loading) {
-      scale.value = withSequence(
-        pressAnimation.press(0.95),
-        pressAnimation.release(1)
-      );
-      runOnJS(onPress)();
+        return {
+          button: {
+            backgroundColor: theme.colors.primary,
+          },
+          text: {
+            color: theme.colors.background,
+          },
+        };
     }
   };
 
   const styles = StyleSheet.create({
     button: {
-      borderRadius: theme.spacing.radius.md,
-      borderWidth: 1,
-      alignItems: 'center',
+      minHeight: 48,
+      borderRadius: 8,
+      paddingHorizontal: 16,
+      paddingVertical: 8,
       justifyContent: 'center',
+      alignItems: 'center',
       flexDirection: 'row',
-      elevation: 2,
-      shadowColor: theme.colors.neutral[900],
-      shadowOffset: { width: 0, height: 2 },
-      shadowOpacity: 0.1,
-      shadowRadius: 4,
+      opacity: disabled ? 0.6 : 1,
+      ...getVariantStyles().button,
     },
     text: {
-      ...theme.typography.variants.button,
-      textAlign: 'center',
+      fontSize: 16,
+      fontWeight: '500',
+      ...getVariantStyles().text,
+    },
+    icon: {
+      marginRight: iconPosition === 'left' ? 8 : 0,
+      marginLeft: iconPosition === 'right' ? 8 : 0,
     },
   });
 
-  const buttonStyles = [
-    styles.button,
-    {
-      backgroundColor: getBackgroundColor(),
-      borderColor: getBorderColor(),
-      padding: getPadding(),
-      width: fullWidth ? '100%' : 'auto',
-    },
-    style,
-  ];
-
-  const textStyles = [
-    styles.text,
-    {
-      color: getTextColor(),
-    },
-    textStyle,
-  ];
-
   return (
-    <AnimatedPressable
-      onPress={handlePress}
-      style={[buttonStyles, animatedStyle]}
+    <TouchableOpacity
+      style={[styles.button, style]}
+      onPress={onPress}
       disabled={disabled || loading}
     >
       {loading ? (
-        <ActivityIndicator 
-          color={getTextColor()} 
-          size="small"
-        />
+        <ActivityIndicator color={styles.text.color} />
       ) : (
-        <Text style={textStyles}>{title}</Text>
+        <>
+          {icon && iconPosition === 'left' && (
+            <MaterialCommunityIcons
+              name={icon}
+              size={20}
+              color={styles.text.color}
+              style={styles.icon}
+            />
+          )}
+          <Text style={[styles.text, textStyle]}>{title}</Text>
+          {icon && iconPosition === 'right' && (
+            <MaterialCommunityIcons
+              name={icon}
+              size={20}
+              color={styles.text.color}
+              style={styles.icon}
+            />
+          )}
+        </>
       )}
-    </AnimatedPressable>
+    </TouchableOpacity>
   );
 };

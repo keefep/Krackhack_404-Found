@@ -1,108 +1,118 @@
 import { Request, Response, NextFunction } from 'express';
-import { User } from '../models/User';
-import { verifyAccessToken, extractTokenFromHeader } from '../utils/tokenManager';
-import { AuthenticationError } from '../utils/errors';
+import jwt, { JsonWebTokenError } from 'jsonwebtoken';
+import { JWT_SECRET } from '../config';
+import { UNAUTHORIZED } from '../utils/errors';
+import User from '../models/User';
 
-export const protect = async (
-  req: Request,
+// Define user type
+export interface IUser {
+  _id: string;
+  name: string;
+  email: string;
+  collegeId: string;
+  role: 'USER' | 'ADMIN';
+  isVerified: boolean;
+}
+
+// Extend Express Request type to include user
+export interface AuthRequest extends Request {
+  user?: IUser;
+}
+
+export const authenticate = async (
+  req: AuthRequest,
   res: Response,
   next: NextFunction
 ) => {
   try {
-    // Get token from header
     const authHeader = req.headers.authorization;
-    const token = extractTokenFromHeader(authHeader);
 
-    // Verify token
-    const decoded = verifyAccessToken(token);
-
-    // Get user from token
-    const user = await User.findById(decoded.id);
-    if (!user) {
-      throw new AuthenticationError('User belonging to this token no longer exists');
+    if (!authHeader) {
+      throw UNAUTHORIZED('Authentication required');
     }
 
-    // Grant access to protected route
-    req.user = user;
-    next();
+    // Check if token format is correct (Bearer token)
+    const parts = authHeader.split(' ');
+    if (parts.length !== 2 || parts[0] !== 'Bearer') {
+      throw UNAUTHORIZED('Invalid token format');
+    }
+
+    const token = parts[1];
+
+    try {
+      // Verify token
+      const decoded = jwt.verify(token, JWT_SECRET) as { userId: string };
+      
+      // Get user from database
+      const user = await User.findById(decoded.userId).select('-password');
+      if (!user) {
+        throw UNAUTHORIZED('User not found');
+      }
+
+      // Check if user is verified
+      if (!user.isVerified) {
+        throw UNAUTHORIZED('Email verification required');
+      }
+
+      // Attach user to request
+      req.user = user.toObject() as IUser;
+      next();
+    } catch (error) {
+      if (error instanceof JsonWebTokenError) {
+        throw UNAUTHORIZED('Invalid token');
+      }
+      throw error;
+    }
   } catch (error) {
-    if (error instanceof AuthenticationError) {
-      res.status(401).json({
-        status: 'error',
-        message: error.message,
-        code: 'INVALID_TOKEN'
-      });
-    } else {
-      next(error);
-    }
+    next(error);
   }
 };
 
-// Optional auth middleware - doesn't require authentication but will populate req.user if token exists
+// Optional authentication middleware (doesn't require auth but attaches user if token exists)
 export const optionalAuth = async (
-  req: Request,
+  req: AuthRequest,
   res: Response,
   next: NextFunction
 ) => {
   try {
     const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+
+    if (!authHeader) {
       return next();
     }
 
-    const token = extractTokenFromHeader(authHeader);
-    const decoded = verifyAccessToken(token);
-    const user = await User.findById(decoded.id);
-    
-    if (user) {
-      req.user = user;
+    const parts = authHeader.split(' ');
+    if (parts.length !== 2 || parts[0] !== 'Bearer') {
+      return next();
     }
+
+    const token = parts[1];
+
+    try {
+      const decoded = jwt.verify(token, JWT_SECRET) as { userId: string };
+      const user = await User.findById(decoded.userId).select('-password');
+
+      if (user) {
+        req.user = user.toObject() as IUser;
+      }
+    } catch {
+      // Ignore token errors in optional auth
+    }
+
     next();
   } catch (error) {
-    // Continue without authentication if token is invalid
-    next();
+    next(error);
   }
 };
 
-// Role-based authorization middleware
-export const restrictTo = (...roles: string[]) => {
-  return (req: Request, res: Response, next: NextFunction) => {
-    if (!req.user || !roles.includes(req.user.role)) {
-      throw new AuthenticationError('Not authorized to access this route');
-    }
-    next();
-  };
-};
-
-// Rate limiting middleware (simple implementation)
-const requestCounts = new Map<string, { count: number; resetTime: number }>();
-
-export const rateLimit = (
-  maxRequests: number = 100,
-  windowMs: number = 15 * 60 * 1000 // 15 minutes
+// Admin only middleware
+export const requireAdmin = (
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction
 ) => {
-  return (req: Request, res: Response, next: NextFunction) => {
-    const ip = req.ip || req.socket.remoteAddress || 'unknown';
-    const now = Date.now();
-    const requestInfo = requestCounts.get(ip) || { count: 0, resetTime: now + windowMs };
-
-    if (now > requestInfo.resetTime) {
-      requestInfo.count = 1;
-      requestInfo.resetTime = now + windowMs;
-    } else {
-      requestInfo.count += 1;
-    }
-
-    requestCounts.set(ip, requestInfo);
-
-    if (requestInfo.count > maxRequests) {
-      return res.status(429).json({
-        status: 'error',
-        message: 'Too many requests, please try again later',
-        code: 'RATE_LIMIT_EXCEEDED'
-      });
-    }
-
-    next();
-  };
+  if (!req.user || req.user.role !== 'ADMIN') {
+    return next(UNAUTHORIZED('Admin access required'));
+  }
+  next();
 };

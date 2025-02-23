@@ -1,207 +1,94 @@
-import React, { useState, useCallback } from 'react';
-import {
-  View,
-  TextInput,
-  Text,
-  StyleSheet,
-  ViewStyle,
-  TextStyle,
-  TextInputProps,
-  NativeSyntheticEvent,
-  TextInputFocusEventData,
-} from 'react-native';
-import Animated, {
-  useAnimatedStyle,
-  useSharedValue,
-  interpolate,
-  Extrapolate,
-} from 'react-native-reanimated';
-import { useTheme } from '../../theme';
-import { pressAnimation } from '../../utils/animations';
+import React from 'react';
+import { View, TextInput, Text, StyleSheet, ViewStyle, TextInputProps } from 'react-native';
+import { useTheme } from '@react-navigation/native';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 export interface InputProps extends Omit<TextInputProps, 'style'> {
-  label: string;
+  label?: string;
   error?: string;
-  helper?: string;
-  containerStyle?: ViewStyle;
-  inputStyle?: TextStyle;
-  labelStyle?: TextStyle;
-  helperStyle?: TextStyle;
-  required?: boolean;
-  startAdornment?: React.ReactNode;
-  endAdornment?: React.ReactNode;
+  leftIcon?: string;
+  rightIcon?: string;
+  onRightIconPress?: () => void;
+  style?: ViewStyle;
+  inputStyle?: TextInputProps['style'];
 }
 
 export const Input: React.FC<InputProps> = ({
   label,
   error,
-  helper,
-  containerStyle,
+  leftIcon,
+  rightIcon,
+  onRightIconPress,
+  style,
   inputStyle,
-  labelStyle,
-  helperStyle,
-  required,
-  startAdornment,
-  endAdornment,
-  onFocus,
-  onBlur,
-  value,
-  ...props
+  ...textInputProps
 }) => {
   const theme = useTheme();
-  const [isFocused, setIsFocused] = useState(false);
-  const animation = useSharedValue(value ? 1 : 0);
-
-  const handleFocus = useCallback((e: NativeSyntheticEvent<TextInputFocusEventData>) => {
-    setIsFocused(true);
-    animation.value = pressAnimation.press(1);
-    onFocus?.(e);
-  }, [onFocus]);
-
-  const handleBlur = useCallback((e: NativeSyntheticEvent<TextInputFocusEventData>) => {
-    setIsFocused(false);
-    if (!value) {
-      animation.value = pressAnimation.release(0);
-    }
-    onBlur?.(e);
-  }, [onBlur, value]);
-
-  const labelAnimatedStyle = useAnimatedStyle(() => {
-    const translateY = interpolate(
-      animation.value,
-      [0, 1],
-      [0, -theme.spacing.components.inputPadding * 1.5],
-      Extrapolate.CLAMP
-    );
-
-    const scale = interpolate(
-      animation.value,
-      [0, 1],
-      [1, 0.75],
-      Extrapolate.CLAMP
-    );
-
-    return {
-      transform: [
-        { translateY },
-        { scale },
-      ],
-    };
-  });
-
-  const getBorderColor = () => {
-    if (error) return theme.colors.error.main;
-    if (isFocused) return theme.colors.primary.main;
-    return theme.colors.border.main;
-  };
 
   const styles = StyleSheet.create({
     container: {
-      marginBottom: theme.spacing.md,
+      marginBottom: 16,
+    },
+    label: {
+      fontSize: 16,
+      marginBottom: 8,
+      color: theme.colors.text,
     },
     inputContainer: {
       flexDirection: 'row',
       alignItems: 'center',
-      borderRadius: theme.spacing.radius.md,
-      backgroundColor: theme.colors.background.paper,
-      overflow: 'hidden',
-    },
-    inputWrapper: {
-      flex: 1,
-      paddingVertical: theme.spacing.components.inputPadding,
+      borderWidth: 1,
+      borderColor: error ? theme.colors.error : theme.colors.border,
+      borderRadius: 8,
+      backgroundColor: theme.colors.card,
+      paddingHorizontal: 12,
     },
     input: {
-      ...theme.typography.variants.body1,
-      color: theme.colors.text.primary,
-      paddingHorizontal: theme.spacing.components.inputPadding,
-      paddingTop: theme.spacing.xs,
-      height: theme.spacing.heights.input,
+      flex: 1,
+      height: 48,
+      color: theme.colors.text,
+      fontSize: 16,
+      paddingLeft: leftIcon ? 8 : 0,
+      paddingRight: rightIcon ? 8 : 0,
     },
-    label: {
-      position: 'absolute',
-      left: theme.spacing.components.inputPadding,
-      color: theme.colors.text.secondary,
-      backgroundColor: 'transparent',
-      ...theme.typography.variants.body1,
-    },
-    helper: {
-      ...theme.typography.variants.caption,
-      color: theme.colors.text.secondary,
-      marginTop: theme.spacing.xs,
-      marginLeft: theme.spacing.components.inputPadding,
+    icon: {
+      padding: 4,
     },
     error: {
-      color: theme.colors.error.main,
-    },
-    errorLabel: {
-      color: theme.colors.error.main,
-    },
-    required: {
-      color: theme.colors.error.main,
-    },
-    adornment: {
-      paddingHorizontal: theme.spacing.components.iconPadding,
+      color: theme.colors.error,
+      fontSize: 12,
+      marginTop: 4,
     },
   });
 
   return (
-    <View style={[styles.container, containerStyle]}>
-      <View style={[
-        styles.inputContainer,
-        {
-          borderColor: getBorderColor(),
-          borderWidth: isFocused ? 2 : 1,
-        },
-      ]}>
-        {startAdornment && (
-          <View style={styles.adornment}>
-            {startAdornment}
-          </View>
-        )}
-
-        <View style={styles.inputWrapper}>
-          <Animated.Text
-            style={[
-              styles.label,
-              labelAnimatedStyle,
-              labelStyle,
-              error && styles.errorLabel,
-            ]}
-          >
-            {label}{required && <Text style={styles.required}> *</Text>}
-          </Animated.Text>
-
-          <TextInput
-            style={[
-              styles.input,
-              inputStyle,
-            ]}
-            onFocus={handleFocus}
-            onBlur={handleBlur}
-            value={value}
-            placeholderTextColor={theme.colors.text.hint}
-            {...props}
+    <View style={[styles.container, style]}>
+      {label && <Text style={styles.label}>{label}</Text>}
+      <View style={styles.inputContainer}>
+        {leftIcon && (
+          <MaterialCommunityIcons
+            name={leftIcon as any}
+            size={20}
+            color={theme.colors.text}
+            style={styles.icon}
           />
-        </View>
-
-        {endAdornment && (
-          <View style={styles.adornment}>
-            {endAdornment}
-          </View>
+        )}
+        <TextInput
+          placeholderTextColor={theme.colors.text + '80'}
+          {...textInputProps}
+          style={[styles.input, inputStyle]}
+        />
+        {rightIcon && (
+          <MaterialCommunityIcons
+            name={rightIcon as any}
+            size={20}
+            color={theme.colors.text}
+            style={styles.icon}
+            onPress={onRightIconPress}
+          />
         )}
       </View>
-
-      {(error || helper) && (
-        <Text
-          style={[
-            styles.helper,
-            helperStyle,
-            error && styles.error,
-          ]}
-        >
-          {error || helper}
-        </Text>
-      )}
+      {error && <Text style={styles.error}>{error}</Text>}
     </View>
   );
 };

@@ -1,215 +1,196 @@
-import { Response, NextFunction } from 'express';
+import { Request, Response, NextFunction } from 'express';
 import { Types } from 'mongoose';
-import { Notification } from '../models/Notification';
 import { AuthRequest } from '../types/express';
+import { Notification, NotificationType, INotification } from '../models/Notification';
 import { ValidationError } from '../utils/errors';
-import { io } from '../utils/socket';
+import { emitToUser } from '../utils/socket';
 
-export const getNotifications = async (
+interface CreateNotificationParams {
+  recipient: Types.ObjectId;
+  type: NotificationType;
+  title: string;
+  message: string;
+  data?: Record<string, any>;
+  priority?: 'low' | 'medium' | 'high' | 'critical';
+}
+
+// Utility function to create and emit notifications
+export async function createAndEmitNotification(params: CreateNotificationParams): Promise<INotification> {
+  const notification = await Notification.create({
+    ...params,
+    read: false,
+  });
+
+  // Emit real-time notification
+  emitToUser(params.recipient.toString(), 'notification', {
+    notification: {
+      _id: notification._id,
+      type: notification.type,
+      title: notification.title,
+      message: notification.message,
+      priority: notification.priority,
+      data: notification.data,
+      createdAt: notification.createdAt,
+    },
+  });
+
+  return notification;
+}
+
+// Get user's notifications
+export const getUserNotifications = async (
   req: AuthRequest,
   res: Response,
   next: NextFunction
-) => {
+): Promise<void> => {
   try {
-    if (!req.user?._id) {
-      throw new ValidationError('User not found');
+    const { unreadOnly, priority } = req.query;
+    const query: any = { recipient: req.user._id };
+
+    if (unreadOnly === 'true') {
+      query.read = false;
     }
 
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 20;
-    const skip = (page - 1) * limit;
+    if (priority) {
+      query.priority = priority;
+    }
 
-    const notifications = await Notification.find({
-      recipient: req.user._id,
-    })
+    const notifications = await Notification.find(query)
       .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit);
-
-    const total = await Notification.countDocuments({
-      recipient: req.user._id,
-    });
-
-    const unreadCount = await Notification.getUnreadCount(req.user._id);
+      .limit(50);
 
     res.status(200).json({
       status: 'success',
-      data: {
-        notifications,
-        total,
-        unreadCount,
-        page,
-        pages: Math.ceil(total / limit),
-      },
+      data: { notifications },
     });
   } catch (error) {
     next(error);
   }
 };
 
+// Mark notifications as read
 export const markAsRead = async (
   req: AuthRequest,
   res: Response,
   next: NextFunction
-) => {
+): Promise<void> => {
   try {
-    if (!req.user?._id) {
-      throw new ValidationError('User not found');
-    }
+    const { notificationIds } = req.body;
 
-    const { notificationId } = req.params;
-
-    const notification = await Notification.findOne({
-      _id: notificationId,
-      recipient: req.user._id,
-    });
-
-    if (!notification) {
-      throw new ValidationError('Notification not found');
-    }
-
-    await notification.markAsRead();
-
-    // Get updated unread count
-    const unreadCount = await Notification.getUnreadCount(req.user._id);
-
-    // Notify client about updated unread count
-    io.to(`user_${req.user._id}`).emit('notification_count', { unreadCount });
-
-    res.status(200).json({
-      status: 'success',
-      data: {
-        notification,
-        unreadCount,
+    await Notification.updateMany(
+      {
+        _id: { $in: notificationIds },
+        recipient: req.user._id,
       },
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-export const markAllAsRead = async (
-  req: AuthRequest,
-  res: Response,
-  next: NextFunction
-) => {
-  try {
-    if (!req.user?._id) {
-      throw new ValidationError('User not found');
-    }
-
-    await Notification.markAllAsRead(req.user._id);
-
-    // Notify client about zero unread notifications
-    io.to(`user_${req.user._id}`).emit('notification_count', { unreadCount: 0 });
+      { $set: { read: true } }
+    );
 
     res.status(200).json({
       status: 'success',
-      data: null,
+      message: 'Notifications marked as read',
     });
   } catch (error) {
     next(error);
   }
 };
 
-export const deleteNotification = async (
+// Critical transaction alerts
+export const sendTransactionAlert = async (
+  recipientId: Types.ObjectId,
+  type: NotificationType,
+  data: {
+    transactionId: Types.ObjectId;
+    productId?: Types.ObjectId;
+    amount?: number;
+    reason?: string;
+  }
+): Promise<void> => {
+  const alertConfigs: Partial<Record<NotificationType, { title: string; message: string; priority: 'high' | 'critical' }>> = {
+    TRANSACTION_INITIATED: {
+      title: 'New Transaction Started',
+      message: 'A new transaction has been initiated for your item',
+      priority: 'high',
+    },
+    TRANSACTION_COMPLETED: {
+      title: 'Transaction Completed',
+      message: 'Your transaction has been completed successfully',
+      priority: 'high',
+    },
+    TRANSACTION_CANCELLED: {
+      title: 'Transaction Cancelled',
+      message: 'A transaction has been cancelled',
+      priority: 'critical',
+    },
+    TRANSACTION_DISPUTED: {
+      title: 'Transaction Disputed',
+      message: 'A dispute has been raised for your transaction',
+      priority: 'critical',
+    },
+    PAYMENT_RECEIVED: {
+      title: 'Payment Received',
+      message: 'Payment has been received for your transaction',
+      priority: 'high',
+    },
+    ITEM_SHIPPED: {
+      title: 'Item Shipped',
+      message: 'Your item has been marked as shipped',
+      priority: 'high',
+    },
+    NEW_MESSAGE: {
+      title: 'New Message',
+      message: 'You have received a new message',
+      priority: 'high',
+    },
+    REVIEW_RECEIVED: {
+      title: 'New Review',
+      message: 'You have received a new review',
+      priority: 'high',
+    },
+    CREDIBILITY_CHANGE: {
+      title: 'Credibility Score Updated',
+      message: 'Your credibility score has been updated',
+      priority: 'high',
+    },
+    ACCOUNT_WARNING: {
+      title: 'Account Warning',
+      message: 'Important notice about your account',
+      priority: 'critical',
+    },
+  };
+
+  const config = alertConfigs[type];
+  if (!config) return;
+
+  await createAndEmitNotification({
+    recipient: recipientId,
+    type,
+    title: config.title,
+    message: `${config.message}. ${data.reason || ''}`.trim(),
+    data,
+    priority: config.priority,
+  });
+};
+
+// Clear old notifications
+export const clearOldNotifications = async (
   req: AuthRequest,
   res: Response,
   next: NextFunction
-) => {
+): Promise<void> => {
   try {
-    if (!req.user?._id) {
-      throw new ValidationError('User not found');
-    }
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-    const { notificationId } = req.params;
-
-    const notification = await Notification.findOneAndDelete({
-      _id: notificationId,
+    await Notification.deleteMany({
       recipient: req.user._id,
+      read: true,
+      priority: { $ne: 'critical' },
+      createdAt: { $lt: thirtyDaysAgo },
     });
-
-    if (!notification) {
-      throw new ValidationError('Notification not found');
-    }
-
-    // Get updated unread count if the deleted notification was unread
-    if (!notification.read) {
-      const unreadCount = await Notification.getUnreadCount(req.user._id);
-      io.to(`user_${req.user._id}`).emit('notification_count', { unreadCount });
-    }
-
-    res.status(204).json({
-      status: 'success',
-      data: null,
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-// Utility function to create and send a notification
-export const createNotification = async ({
-  recipient,
-  type,
-  title,
-  message,
-  link,
-  data,
-  priority = 'low',
-  expiresAt,
-}: {
-  recipient: Types.ObjectId;
-  type: 'chat' | 'review' | 'product' | 'system';
-  title: string;
-  message: string;
-  link?: string;
-  data?: Record<string, any>;
-  priority?: 'low' | 'medium' | 'high';
-  expiresAt?: Date;
-}): Promise<void> => {
-  try {
-    const notification = await Notification.createNotification({
-      recipient,
-      type,
-      title,
-      message,
-      link,
-      data,
-      priority,
-      expiresAt,
-    });
-
-    // Get updated unread count
-    const unreadCount = await Notification.getUnreadCount(recipient);
-
-    // Send real-time notification
-    io.to(`user_${recipient}`).emit('new_notification', {
-      notification,
-      unreadCount,
-    });
-  } catch (error) {
-    console.error('Error creating notification:', error);
-  }
-};
-
-// Cleanup old notifications (can be called by a cron job)
-export const cleanupOldNotifications = async (
-  req: AuthRequest,
-  res: Response,
-  next: NextFunction
-) => {
-  try {
-    if (!req.user?.role?.includes('admin')) {
-      throw new ValidationError('Not authorized');
-    }
-
-    const days = parseInt(req.query.days as string) || 30;
-    await Notification.cleanupOldNotifications(days);
 
     res.status(200).json({
       status: 'success',
-      message: `Cleaned up notifications older than ${days} days`,
+      message: 'Old notifications cleared',
     });
   } catch (error) {
     next(error);

@@ -1,172 +1,182 @@
-import React from 'react';
-import {
-  View,
-  StyleSheet,
-  Text,
-  Image,
-  ScrollView,
-  Pressable,
-} from 'react-native';
-import { CompositeScreenProps } from '@react-navigation/native';
-import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { BottomTabScreenProps } from '@react-navigation/bottom-tabs';
-import { MainStackParamList, MainTabParamList } from '../../navigation/types';
-import { Button } from '../../components';
-import { useTheme } from '../../theme';
-import { useAuth } from '../../contexts';
-import Ionicons from '@expo/vector-icons/Ionicons';
+import React, { useCallback, useState } from 'react';
+import { View, Text, StyleSheet, ScrollView, Alert, Image } from 'react-native';
+import { useTheme } from '@react-navigation/native';
+import { Button } from '../../components/Button/Button';
+import { Card } from '../../components/Card/Card';
+import { ProfileScreenProps } from '../../navigation/types';
+import { useAuth } from '../../contexts/AuthContext';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 
-type Props = CompositeScreenProps<
-  BottomTabScreenProps<MainTabParamList, 'Profile'>,
-  NativeStackScreenProps<MainStackParamList>
->;
-
-interface MenuOption {
-  icon: keyof typeof Ionicons.glyphMap;
-  label: string;
-  onPress: () => void;
-}
+type Props = ProfileScreenProps<'ProfileScreen'>;
 
 export const ProfileScreen: React.FC<Props> = ({ navigation }) => {
   const theme = useTheme();
-  const { user, signOut } = useAuth();
+  const { user, logout } = useAuth();
+  const [isLoading, setIsLoading] = useState(false);
 
-  const handleSignOut = async () => {
+  const handleLogout = useCallback(async () => {
+    setIsLoading(true);
     try {
-      await signOut();
+      await logout();
     } catch (error) {
-      console.error('Failed to sign out:', error);
+      Alert.alert('Error', 'Failed to logout. Please try again.');
+    } finally {
+      setIsLoading(false);
     }
+  }, [logout]);
+
+  const navigateToSettings = () => {
+    navigation.navigate('Settings');
   };
 
-  const menuOptions: MenuOption[] = [
-    {
-      icon: 'cube-outline',
-      label: 'My Products',
-      onPress: () => {
-        // TODO: Navigate to my products screen
-      },
-    },
-    {
-      icon: 'heart-outline',
-      label: 'Saved Items',
-      onPress: () => {
-        // TODO: Navigate to saved items screen
-      },
-    },
-    {
-      icon: 'settings-outline',
-      label: 'Settings',
-      onPress: () => navigation.navigate('Settings'),
-    },
-  ];
+  const handleVerifyId = () => {
+    // TODO: Implement ID verification flow
+    Alert.alert('Coming Soon', 'ID verification will be available soon.');
+  };
 
-  const renderMenuItem = ({ icon, label, onPress }: MenuOption) => (
-    <Pressable
-      key={label}
-      style={({ pressed }) => [
-        styles.menuItem,
-        pressed && { opacity: 0.7 },
-        { borderBottomColor: theme.colors.border.main },
-      ]}
-      onPress={onPress}
-    >
-      <View style={styles.menuItemContent}>
-        <View style={styles.menuItemLeft}>
-          <Ionicons
-            name={icon}
-            size={24}
-            color={theme.colors.text.primary}
-            style={styles.menuItemIcon}
-          />
-          <Text style={[theme.typography.variants.body1, { color: theme.colors.text.primary }]}>
-            {label}
-          </Text>
-        </View>
-        <Ionicons
-          name="chevron-forward"
-          size={24}
-          color={theme.colors.text.secondary}
-        />
-      </View>
-    </Pressable>
-  );
+  const styles = StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: theme.colors.background,
+    },
+    content: {
+      padding: 16,
+    },
+    profileCard: {
+      padding: 16,
+      alignItems: 'center',
+      marginBottom: 16,
+    },
+    avatar: {
+      width: 100,
+      height: 100,
+      borderRadius: 50,
+      marginBottom: 16,
+      backgroundColor: theme.colors.primary + '20',
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    avatarText: {
+      fontSize: 36,
+      color: theme.colors.primary,
+      fontWeight: 'bold',
+    },
+    name: {
+      fontSize: 24,
+      fontWeight: 'bold',
+      color: theme.colors.text,
+      marginBottom: 4,
+    },
+    email: {
+      fontSize: 16,
+      color: theme.colors.text + '99',
+      marginBottom: 8,
+    },
+    infoCard: {
+      padding: 16,
+      marginBottom: 16,
+    },
+    infoRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      paddingVertical: 8,
+    },
+    infoLabel: {
+      fontSize: 16,
+      color: theme.colors.text + '99',
+    },
+    infoValue: {
+      fontSize: 16,
+      color: theme.colors.text,
+      fontWeight: '500',
+    },
+    verificationBadge: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: theme.colors.primary + '20',
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+      borderRadius: 16,
+    },
+    verificationText: {
+      color: theme.colors.primary,
+      marginLeft: 4,
+      fontWeight: '500',
+    },
+    buttonContainer: {
+      gap: 12,
+    },
+  });
+
+  const getInitials = (name: string) => {
+    return name
+      .split(' ')
+      .map(part => part[0])
+      .join('')
+      .toUpperCase();
+  };
 
   return (
-    <ScrollView
-      style={[styles.container, { backgroundColor: theme.colors.background.default }]}
-      contentContainerStyle={styles.content}
-    >
-      <View style={[styles.header, { backgroundColor: theme.colors.background.paper }]}>
-        <Image
-          source={user?.avatar ? { uri: user.avatar } : require('../../../assets/default-avatar.png')}
-          style={styles.avatar}
+    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      <Card style={styles.profileCard}>
+        <View style={styles.avatar}>
+          <Text style={styles.avatarText}>
+            {getInitials(user?.name || 'User')}
+          </Text>
+        </View>
+        <Text style={styles.name}>{user?.name}</Text>
+        <Text style={styles.email}>{user?.email}</Text>
+        <View style={styles.verificationBadge}>
+          <MaterialCommunityIcons
+            name={user?.idCardVerified ? 'check-circle' : 'clock-outline'}
+            size={16}
+            color={theme.colors.primary}
+          />
+          <Text style={styles.verificationText}>
+            {user?.idCardVerified ? 'Verified' : 'Verification Pending'}
+          </Text>
+        </View>
+      </Card>
+
+      <Card style={styles.infoCard}>
+        <View style={styles.infoRow}>
+          <Text style={styles.infoLabel}>College ID</Text>
+          <Text style={styles.infoValue}>{user?.collegeId}</Text>
+        </View>
+        <View style={styles.infoRow}>
+          <Text style={styles.infoLabel}>Credibility Score</Text>
+          <Text style={styles.infoValue}>{user?.credibilityScore || 0}</Text>
+        </View>
+        {user?.phoneNumber && (
+          <View style={styles.infoRow}>
+            <Text style={styles.infoLabel}>Phone</Text>
+            <Text style={styles.infoValue}>{user.phoneNumber}</Text>
+          </View>
+        )}
+      </Card>
+
+      <View style={styles.buttonContainer}>
+        {!user?.idCardVerified && (
+          <Button
+            title="Verify College ID"
+            onPress={handleVerifyId}
+            variant="secondary"
+          />
+        )}
+        <Button
+          title="Settings"
+          onPress={navigateToSettings}
+          variant="secondary"
         />
-        <Text style={[theme.typography.variants.h4, styles.name]}>
-          {user?.name || 'User'}
-        </Text>
-        <Text style={[theme.typography.variants.body2, { color: theme.colors.text.secondary }]}>
-          {user?.email}
-        </Text>
+        <Button
+          title="Logout"
+          onPress={handleLogout}
+          loading={isLoading}
+          disabled={isLoading}
+          variant="secondary"
+        />
       </View>
-
-      <View style={[styles.section, { backgroundColor: theme.colors.background.paper }]}>
-        {menuOptions.map(renderMenuItem)}
-      </View>
-
-      <Button
-        title="Sign Out"
-        onPress={handleSignOut}
-        variant="outlined"
-        style={styles.signOutButton}
-        fullWidth
-      />
     </ScrollView>
   );
 };
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  content: {
-    paddingBottom: 24,
-  },
-  header: {
-    padding: 24,
-    alignItems: 'center',
-    marginBottom: 24,
-  },
-  avatar: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    marginBottom: 16,
-  },
-  name: {
-    marginBottom: 4,
-  },
-  section: {
-    marginBottom: 24,
-  },
-  menuItem: {
-    borderBottomWidth: 1,
-  },
-  menuItemContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 16,
-    paddingHorizontal: 20,
-  },
-  menuItemLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  menuItemIcon: {
-    marginRight: 12,
-  },
-  signOutButton: {
-    marginHorizontal: 20,
-  },
-});

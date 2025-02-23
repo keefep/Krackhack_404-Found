@@ -1,26 +1,7 @@
-import mongoose from 'mongoose';
-import { Schema, Types } from 'mongoose';
+import mongoose, { Schema } from 'mongoose';
+import { ProductDocument } from '../types/models';
 
-export interface IProduct {
-  title: string;
-  description: string;
-  price: number;
-  images: string[];
-  category: string;
-  condition: 'new' | 'like-new' | 'good' | 'fair' | 'poor';
-  seller: Types.ObjectId;
-  location: string;
-  status: 'available' | 'sold' | 'reserved';
-  viewCount: number;
-  savedCount: number;
-  tags: string[];
-  createdAt: Date;
-  updatedAt: Date;
-  deletedAt?: Date;
-  draft: boolean;
-}
-
-const productSchema = new Schema<IProduct>({
+const productSchema = new Schema({
   title: {
     type: String,
     required: true,
@@ -51,54 +32,49 @@ const productSchema = new Schema<IProduct>({
   },
   condition: {
     type: String,
-    enum: ['new', 'like-new', 'good', 'fair', 'poor'],
+    enum: ['NEW', 'LIKE_NEW', 'GOOD', 'FAIR'],
     required: true,
-  },
-  seller: {
-    type: Schema.Types.ObjectId,
-    ref: 'User',
-    required: true,
-  },
-  location: {
-    type: String,
-    required: true,
-    trim: true,
   },
   status: {
     type: String,
-    enum: ['available', 'sold', 'reserved'],
-    default: 'available',
+    enum: ['AVAILABLE', 'SOLD', 'RESERVED'],
+    default: 'AVAILABLE',
   },
-  viewCount: {
-    type: Number,
-    default: 0,
-    min: 0,
-  },
-  savedCount: {
-    type: Number,
-    default: 0,
-    min: 0,
+  location: {
+    type: String,
+    trim: true,
   },
   tags: [{
     type: String,
     trim: true,
   }],
-  deletedAt: {
-    type: Date,
-    default: null,
-  },
-  draft: {
-    type: Boolean,
-    default: false,
+  seller: {
+    type: Schema.Types.ObjectId,
+    ref: 'User',
+    required: true,
   },
 }, {
   timestamps: true,
+  toJSON: {
+    virtuals: true,
+    transform: (_, ret) => {
+      ret.id = ret._id;
+      delete ret._id;
+      delete ret.__v;
+      return ret;
+    },
+  },
 });
 
-// Create indexes for search
+// Indexes
 productSchema.index({ title: 'text', description: 'text', tags: 'text' });
-productSchema.index({ category: 1, status: 1 });
-productSchema.index({ seller: 1, status: 1 });
+productSchema.index({ category: 1 });
+productSchema.index({ status: 1 });
+productSchema.index({ seller: 1 });
+productSchema.index({ condition: 1 });
+productSchema.index({ price: 1 });
 productSchema.index({ createdAt: -1 });
 
-export const Product = mongoose.model<IProduct>('Product', productSchema);
+const Product = mongoose.model<ProductDocument>('Product', productSchema);
+
+export default Product;

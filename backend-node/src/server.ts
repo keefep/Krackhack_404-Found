@@ -1,113 +1,94 @@
-import express, { Request, Response, NextFunction, ErrorRequestHandler as ExpressErrorHandler } from 'express';
-import cookieParser from 'cookie-parser';
+import express from 'express';
 import cors from 'cors';
-import helmet from 'helmet';
-import dotenv from 'dotenv';
+import path from 'path';
+import fs from 'fs';
+import { config } from 'dotenv';
 import { connectDatabase } from './config/database';
-import router from './routes/index';
-import { rateLimit } from './middleware/auth';
-import { ValidationError, AuthenticationError } from './utils/errors';
+import routes from './routes';
 
-dotenv.config();
+// Load environment variables
+config();
 
 const app = express();
+const port = process.env.PORT || 5000;
 
-// Security middleware
-app.use(helmet());
-
-// CORS configuration
+// Middleware
 app.use(cors({
-  origin: process.env.CLIENT_URL || 'http://localhost:3000',
-  credentials: true, // Allow credentials (cookies)
+  origin: '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-// Rate limiting
-app.use(rateLimit(100, 15 * 60 * 1000)); // 100 requests per 15 minutes
+// Serve static files from uploads directory
+app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
-// Request parsers
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-app.use(cookieParser());
+// Routes
+app.use('/api', routes);
 
-// Static files for uploaded images
-app.use('/uploads', express.static('uploads'));
-
-// Mount the main router at the root path
-app.use('/', router);
-
-// Error handling middleware types
-type CustomErrorRequestHandler = ExpressErrorHandler;
-type CustomRequestHandler = express.RequestHandler;
-
-// 404 handler
-const notFoundHandler: CustomRequestHandler = (req, res) => {
-  res.status(404).json({
-    status: 'error',
-    message: 'Route not found',
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.json({ 
+    status: 'ok', 
+    time: new Date().toISOString(),
+    env: process.env.NODE_ENV,
   });
-};
+});
 
-app.use(notFoundHandler);
-
-// Global error handler
-const errorHandler: CustomErrorRequestHandler = (err, req, res, next) => {
-  console.error(err);
-
-  if (err instanceof ValidationError) {
-    res.status(400).json({
-      status: 'error',
-      message: err.message,
-      code: 'VALIDATION_ERROR'
-    });
-    return;
-  }
-
-  if (err instanceof AuthenticationError) {
-    res.status(401).json({
-      status: 'error',
-      message: err.message,
-      code: 'AUTH_ERROR'
-    });
-    return;
-  }
-
-  // Default error
-  res.status(500).json({
+// Error handling middleware
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  console.error(err.stack);
+  res.status(err.statusCode || 500).json({
     status: 'error',
-    message: process.env.NODE_ENV === 'production' 
-      ? 'Internal server error' 
-      : err.message,
-    code: 'SERVER_ERROR'
+    message: err.message || 'Internal server error',
+    ...(process.env.NODE_ENV === 'development' && { stack: err.stack }),
   });
-  return;
-};
+});
 
-app.use(errorHandler);
-
-// Set the port (default to 3000)
-const PORT = process.env.PORT || 3000;
-
-// Connect to MongoDB and start the server
-connectDatabase()
-  .then(() => {
-    const server = app.listen(PORT, () => {
-      console.log(`Server running on port ${PORT}`);
+// Start server
+const startServer = async () => {
+  try {
+    // Connect to MongoDB
+    await connectDatabase();
+    
+    // Create uploads directory if it doesn't exist
+    const uploadDir = path.join(__dirname, '../uploads');
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+    
+    // Start server
+    app.listen(port, () => {
+      console.log(`Server running on port ${port}`);
+      console.log(`API URL: http://localhost:${port}/api`);
+      console.log(`Uploads URL: http://localhost:${port}/uploads`);
+      if (process.env.NODE_ENV === 'development') {
+        console.log('\nTest endpoints:');
+        console.log('Health check: curl http://localhost:5000/health');
+        console.log('Login: curl -X POST http://localhost:5000/api/auth/login -H "Content-Type: application/json" -d \'{"email":"test@iitmandi.ac.in","password":"test123"}\'');
+      }
     });
-
-    // Initialize Socket.IO
-    const { initializeSocket } = require('./utils/socket');
-    initializeSocket(server);
-  })
-  .catch((error) => {
-    console.error("Error connecting to MongoDB:", error);
+  } catch (error) {
+    console.error('Failed to start server:', error);
     process.exit(1);
-  });
+  }
+};
 
-// Handle unhandled rejections
-process.on('unhandledRejection', (err: Error) => {
-  console.error('UNHANDLED REJECTION! 💥 Shutting down...');
-  console.error(err);
+// Handle uncaught exceptions
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error);
   process.exit(1);
 });
+
+// Handle unhandled promise rejections
+process.on('unhandledRejection', (error) => {
+  console.error('Unhandled Rejection:', error);
+  process.exit(1);
+});
+
+// Start the server
+startServer();
+
+// Export for testing
+export default app;

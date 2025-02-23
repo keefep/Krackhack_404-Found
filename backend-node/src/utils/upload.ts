@@ -1,70 +1,69 @@
 import multer from 'multer';
-import { Request } from 'express';
 import path from 'path';
-import { v4 as uuidv4 } from 'uuid';
-import sharp from 'sharp';
-import fs from 'fs/promises';
-import { ValidationError } from './errors';
+import fs from 'fs';
+import { BAD_REQUEST } from './errors';
+
+// Ensure uploads directory exists
+const UPLOAD_DIR = 'uploads';
+if (!fs.existsSync(UPLOAD_DIR)) {
+  fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+}
 
 // Configure storage
-const storage = multer.memoryStorage();
-
-// Configure file filter
-const fileFilter = (req: Request, file: Express.Multer.File, cb: multer.FileFilterCallback) => {
-  const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
-  
-  if (!allowedTypes.includes(file.mimetype)) {
-    cb(new ValidationError('Only JPEG, PNG and WebP images are allowed'));
-    return;
-  }
-  
-  cb(null, true);
-};
-
-// Create multer upload instance
-export const upload = multer({
-  storage,
-  limits: {
-    fileSize: 5 * 1024 * 1024, // 5MB
-    files: 5 // Max 5 files
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, UPLOAD_DIR);
   },
-  fileFilter
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, uniqueSuffix + path.extname(file.originalname));
+  }
 });
 
-// Process and save images
-export const processImages = async (files: Express.Multer.File[]): Promise<string[]> => {
-  const uploadDir = path.join(process.cwd(), 'uploads');
-  await fs.mkdir(uploadDir, { recursive: true });
-
-  const imageUrls: string[] = [];
-
-  for (const file of files) {
-    const filename = `${uuidv4()}.webp`;
-    const filepath = path.join(uploadDir, filename);
-
-    // Process image with sharp
-    await sharp(file.buffer)
-      .resize(800, 800, { // Resize to max dimensions while maintaining aspect ratio
-        fit: 'inside',
-        withoutEnlargement: true
-      })
-      .webp({ quality: 80 }) // Convert to WebP format
-      .toFile(filepath);
-
-    imageUrls.push(`/uploads/${filename}`);
+// File filter
+const fileFilter = (req: any, file: Express.Multer.File, cb: multer.FileFilterCallback) => {
+  const allowedMimes = ['image/jpeg', 'image/png', 'image/webp'];
+  if (allowedMimes.includes(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(new Error('Invalid file type. Only JPEG, PNG and WEBP are allowed.'));
   }
-
-  return imageUrls;
 };
 
-// Delete images
-export const deleteImages = async (imageUrls: string[]) => {
-  for (const url of imageUrls) {
-    const filepath = path.join(process.cwd(), url);
-    try {
-      await fs.unlink(filepath);
-    } catch (error) {
-      console.error('Error deleting image:', error);
-    }
+// Export multer instance
+export const upload = multer({
+  storage,
+  fileFilter,
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5MB
+    files: 5 // Maximum 5 files
   }
+});
+
+// Types for file upload response
+export interface UploadResult {
+  filename: string;
+  path: string;
+  size: number;
+  mimetype: string;
+}
+
+// Helper function to process uploaded files
+export const processUploadedFiles = (files: Express.Multer.File[]): UploadResult[] => {
+  return files.map(file => ({
+    filename: file.filename,
+    path: `/uploads/${file.filename}`, // URL path
+    size: file.size,
+    mimetype: file.mimetype
+  }));
+};
+
+// Helper function to delete files
+export const deleteFiles = (filenames: string[]) => {
+  filenames.forEach(filename => {
+    const filepath = path.join(UPLOAD_DIR, filename);
+    if (fs.existsSync(filepath)) {
+      fs.unlinkSync(filepath);
+    }
+  });
 };

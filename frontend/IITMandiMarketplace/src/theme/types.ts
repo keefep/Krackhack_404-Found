@@ -1,18 +1,20 @@
-import { MD3Theme } from 'react-native-paper';
-import { colors } from './colors';
-import { typography } from './typography';
-import { spacing } from './spacing';
-import { shadows } from './shadows';
+import '@react-navigation/native';
 
-export interface CustomTheme extends MD3Theme {
-  customColors: typeof colors;
-  customTypography: typeof typography;
-  customSpacing: typeof spacing;
-  shadows: typeof shadows;
-}
+declare module '@react-navigation/native' {
+  export type ExtendedTheme = {
+    dark: boolean;
+    colors: {
+      primary: string;
+      background: string;
+      card: string;
+      text: string;
+      border: string;
+      notification: string;
+      error: string;
+      success: string;
+      warning: string;
+    };
+  };
 
-declare global {
-  namespace ReactNativePaper {
-    interface Theme extends CustomTheme {}
-  }
+  export function useTheme(): ExtendedTheme;
 }

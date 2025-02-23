@@ -1,29 +1,34 @@
 import React from 'react';
-import { StatusBar } from 'expo-status-bar';
-import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { PaperProvider } from 'react-native-paper';
 import { NavigationContainer } from '@react-navigation/native';
-import { paperTheme } from '../theme';
-import { AuthProvider } from '../contexts';
-import { getNavigationTheme } from '../navigation/constants';
+import { ThemeProvider } from '@react-navigation/native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { lightTheme } from '../theme/theme';
+import { AuthProvider } from '../contexts/AuthContext';
+import { RootNavigator } from '../navigation';
+import { LoadingScreen } from '../components/LoadingScreen/LoadingScreen';
+import { useAuth } from '../contexts/AuthContext';
 
-interface ProvidersProps {
-  children: React.ReactNode;
-}
+// Navigation wrapper with auth state
+const NavigationWrapper = () => {
+  const { isLoading } = useAuth();
 
-export const Providers: React.FC<ProvidersProps> = ({ children }) => {
-  const navigationTheme = getNavigationTheme();
+  if (isLoading) {
+    return <LoadingScreen />;
+  }
 
+  return <RootNavigator />;
+};
+
+export const Providers: React.FC = () => {
   return (
     <SafeAreaProvider>
-      <PaperProvider theme={paperTheme}>
-        <AuthProvider>
-          <NavigationContainer theme={navigationTheme}>
-            <StatusBar style="auto" />
-            {children}
-          </NavigationContainer>
-        </AuthProvider>
-      </PaperProvider>
+      <ThemeProvider value={lightTheme}>
+        <NavigationContainer theme={lightTheme}>
+          <AuthProvider>
+            <NavigationWrapper />
+          </AuthProvider>
+        </NavigationContainer>
+      </ThemeProvider>
     </SafeAreaProvider>
   );
 };
