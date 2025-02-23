@@ -154,11 +154,6 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 
 MIT License - see the [LICENSE](LICENSE) file for details.
 
-## 👥 Team
-
-- [Your Name](https://github.com/yourusername) - Frontend Lead
-- [Team Member](https://github.com/teammember) - UI/UX Designer
-
 ## 🙏 Acknowledgments
 
 - IIT Mandi Student Community
